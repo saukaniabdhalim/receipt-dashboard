@@ -1,298 +1,435 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import Dashboard from './components/Dashboard.jsx'
 import ReceiptList from './components/ReceiptList.jsx'
 import AddReceiptModal from './components/AddReceiptModal.jsx'
 import OneDrivePanel from './components/OneDrivePanel.jsx'
-import { LayoutDashboard, Receipt, CloudIcon, Plus, Menu, Download, Upload, Trash2 } from 'lucide-react'
-import { SHARE_URL as ONEDRIVE_FOLDER_URL } from './services/oneDriveService.js'
+import GistSetupModal from './components/GistSetupModal.jsx'
+import {
+  LayoutDashboard, Receipt, CloudIcon, Plus, Menu,
+  Download, Upload, Trash2, Github, Cloud, CloudOff,
+  RefreshCw, Loader
+} from 'lucide-react'
+import { SHARE_URL } from './services/oneDriveService.js'
+import {
+  isConfigured, getSettings, clearSettings,
+  loadFromGist, saveToGist, getGistUrl
+} from './services/gistStorage.js'
 
+// ── Categories ───────────────────────────────────────────────
 export const CATEGORIES = [
-  { id: 'food',          label: 'Food & Dining',    color: '#f97316', emoji: '🍜' },
-  { id: 'transport',     label: 'Transport',         color: '#3b82f6', emoji: '🚗' },
-  { id: 'toll',          label: 'Toll / Highway',    color: '#6366f1', emoji: '🛣️' },
-  { id: 'utilities',     label: 'Utilities',         color: '#14b8a6', emoji: '💡' },
-  { id: 'shopping',      label: 'Shopping',          color: '#ec4899', emoji: '🛍️' },
-  { id: 'healthcare',    label: 'Healthcare',        color: '#22c55e', emoji: '🏥' },
-  { id: 'entertainment', label: 'Entertainment',     color: '#a78bfa', emoji: '🎬' },
-  { id: 'grocery',       label: 'Grocery',           color: '#eab308', emoji: '🛒' },
-  { id: 'education',     label: 'Education',         color: '#06b6d4', emoji: '📚' },
-  { id: 'others',        label: 'Others',            color: '#6b82a8', emoji: '📋' },
+  { id:'food',          label:'Food & Dining',    color:'#f97316', emoji:'🍜' },
+  { id:'transport',     label:'Transport',         color:'#3b82f6', emoji:'🚗' },
+  { id:'toll',          label:'Toll / Highway',    color:'#6366f1', emoji:'🛣️' },
+  { id:'utilities',     label:'Utilities',         color:'#14b8a6', emoji:'💡' },
+  { id:'shopping',      label:'Shopping',          color:'#ec4899', emoji:'🛍️' },
+  { id:'healthcare',    label:'Healthcare',        color:'#22c55e', emoji:'🏥' },
+  { id:'entertainment', label:'Entertainment',     color:'#a78bfa', emoji:'🎬' },
+  { id:'grocery',       label:'Grocery',           color:'#eab308', emoji:'🛒' },
+  { id:'education',     label:'Education',         color:'#06b6d4', emoji:'📚' },
+  { id:'others',        label:'Others',            color:'#6b82a8', emoji:'📋' },
 ]
 
-const STORAGE_KEY = 'resit_dashboard_data'
+const LOCAL_KEY = 'resit_dashboard_data'
 
 function seedData() {
-  const today = new Date()
-  const m = (n) => { const d = new Date(today); d.setDate(d.getDate() - n); return d.toISOString().split('T')[0] }
+  const m = n => { const d=new Date(); d.setDate(d.getDate()-n); return d.toISOString().split('T')[0] }
   return [
-    { id: uuidv4(), date: m(1),  merchant: 'Tesco Ipoh',      category: 'grocery',       amount: 87.50,  description: 'Weekly grocery',       currency: 'MYR', imageNote: '' },
-    { id: uuidv4(), date: m(2),  merchant: 'Petronas',         category: 'transport',     amount: 60.00,  description: 'Petrol RON95',          currency: 'MYR', imageNote: '' },
-    { id: uuidv4(), date: m(3),  merchant: 'PLUS Highway',     category: 'toll',          amount: 12.30,  description: 'KL-Ipoh toll',          currency: 'MYR', imageNote: '' },
-    { id: uuidv4(), date: m(4),  merchant: "McDonald's",       category: 'food',          amount: 24.90,  description: 'Lunch',                 currency: 'MYR', imageNote: '' },
-    { id: uuidv4(), date: m(5),  merchant: 'TNB',              category: 'utilities',     amount: 135.00, description: 'Electricity bill',      currency: 'MYR', imageNote: '' },
-    { id: uuidv4(), date: m(6),  merchant: 'Uniqlo',           category: 'shopping',      amount: 199.00, description: 'Clothes',               currency: 'MYR', imageNote: '' },
-    { id: uuidv4(), date: m(7),  merchant: 'Klinik Kesihatan', category: 'healthcare',    amount: 15.00,  description: 'GP visit',              currency: 'MYR', imageNote: '' },
-    { id: uuidv4(), date: m(10), merchant: 'Netflix',          category: 'entertainment', amount: 54.90,  description: 'Monthly subscription',  currency: 'MYR', imageNote: '' },
-    { id: uuidv4(), date: m(12), merchant: 'Mamak Corner',     category: 'food',          amount: 18.50,  description: 'Dinner',                currency: 'MYR', imageNote: '' },
-    { id: uuidv4(), date: m(15), merchant: 'Grab',             category: 'transport',     amount: 22.00,  description: 'GrabCar ride',          currency: 'MYR', imageNote: '' },
-    { id: uuidv4(), date: m(20), merchant: 'Guardian',         category: 'healthcare',    amount: 45.80,  description: 'Medicine',              currency: 'MYR', imageNote: '' },
-    { id: uuidv4(), date: m(22), merchant: 'Aeon',             category: 'shopping',      amount: 320.00, description: 'Household items',       currency: 'MYR', imageNote: '' },
-    { id: uuidv4(), date: m(25), merchant: "Lotus's",          category: 'grocery',       amount: 95.30,  description: 'Grocery',               currency: 'MYR', imageNote: '' },
-    { id: uuidv4(), date: m(28), merchant: 'Celcom',           category: 'utilities',     amount: 88.00,  description: 'Mobile plan',           currency: 'MYR', imageNote: '' },
-    { id: uuidv4(), date: m(35), merchant: 'Pizza Hut',        category: 'food',          amount: 55.00,  description: 'Family dinner',         currency: 'MYR', imageNote: '' },
+    { id:uuidv4(), date:m(1),  merchant:'Tesco Ipoh',      category:'grocery',       amount:87.50,  description:'Weekly grocery',      currency:'MYR', imageNote:'' },
+    { id:uuidv4(), date:m(2),  merchant:'Petronas',         category:'transport',     amount:60.00,  description:'Petrol RON95',         currency:'MYR', imageNote:'' },
+    { id:uuidv4(), date:m(3),  merchant:'PLUS Highway',     category:'toll',          amount:12.30,  description:'KL-Ipoh toll',         currency:'MYR', imageNote:'' },
+    { id:uuidv4(), date:m(4),  merchant:"McDonald's",       category:'food',          amount:24.90,  description:'Lunch',                currency:'MYR', imageNote:'' },
+    { id:uuidv4(), date:m(5),  merchant:'TNB',              category:'utilities',     amount:135.00, description:'Electricity bill',     currency:'MYR', imageNote:'' },
+    { id:uuidv4(), date:m(6),  merchant:'Uniqlo',           category:'shopping',      amount:199.00, description:'Clothes',              currency:'MYR', imageNote:'' },
+    { id:uuidv4(), date:m(7),  merchant:'Klinik Kesihatan', category:'healthcare',    amount:15.00,  description:'GP visit',             currency:'MYR', imageNote:'' },
+    { id:uuidv4(), date:m(10), merchant:'Netflix',          category:'entertainment', amount:54.90,  description:'Monthly subscription', currency:'MYR', imageNote:'' },
+    { id:uuidv4(), date:m(12), merchant:'Mamak Corner',     category:'food',          amount:18.50,  description:'Dinner',               currency:'MYR', imageNote:'' },
+    { id:uuidv4(), date:m(15), merchant:'Grab',             category:'transport',     amount:22.00,  description:'GrabCar ride',         currency:'MYR', imageNote:'' },
+    { id:uuidv4(), date:m(20), merchant:'Guardian',         category:'healthcare',    amount:45.80,  description:'Medicine',             currency:'MYR', imageNote:'' },
+    { id:uuidv4(), date:m(22), merchant:'Aeon',             category:'shopping',      amount:320.00, description:'Household items',      currency:'MYR', imageNote:'' },
+    { id:uuidv4(), date:m(28), merchant:'Celcom',           category:'utilities',     amount:88.00,  description:'Mobile plan',          currency:'MYR', imageNote:'' },
+    { id:uuidv4(), date:m(35), merchant:'Pizza Hut',        category:'food',          amount:55.00,  description:'Family dinner',        currency:'MYR', imageNote:'' },
+    { id:uuidv4(), date:m(45), merchant:"Lotus's",          category:'grocery',       amount:95.30,  description:'Grocery',              currency:'MYR', imageNote:'' },
   ]
 }
 
+// ── App ───────────────────────────────────────────────────────
 export default function App() {
-  const [tab, setTab] = useState('dashboard')
-  const [receipts, setReceipts] = useState([])
-  const [showModal, setShowModal] = useState(false)
-  const [editItem, setEditItem] = useState(null)
-  const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [filterMonth, setFilterMonth] = useState('all')
-  const [filterCategory, setFilterCategory] = useState('all')
-  const [search, setSearch] = useState('')
-  const [toast, setToast] = useState(null)
+  const [tab,             setTab]            = useState('dashboard')
+  const [receipts,        setReceipts]       = useState([])
+  const [showModal,       setShowModal]      = useState(false)
+  const [editItem,        setEditItem]       = useState(null)
+  const [sidebarOpen,     setSidebarOpen]    = useState(false)
+  const [filterMonth,     setFilterMonth]    = useState('all')
+  const [filterCategory,  setFilterCategory] = useState('all')
+  const [search,          setSearch]         = useState('')
+  const [toast,           setToast]          = useState(null)
+  const [showGistSetup,   setShowGistSetup]  = useState(false)
+  const [gistConnected,   setGistConnected]  = useState(false)
+  const [syncStatus,      setSyncStatus]     = useState('idle')   // idle|syncing|synced|error
+  const [syncError,       setSyncError]      = useState('')
+  const [ghUser,          setGhUser]         = useState(null)
+  const saveTimeout = useRef(null)
 
+  // ── Init: load data ─────────────────────────────────────────
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      if (raw) setReceipts(JSON.parse(raw))
-      else { const s = seedData(); setReceipts(s); localStorage.setItem(STORAGE_KEY, JSON.stringify(s)) }
-    } catch { setReceipts([]) }
-  }, [])
+    const init = async () => {
+      if (isConfigured()) {
+        setGistConnected(true)
+        const { token } = getSettings()
+        // try to get username from cached settings
+        setSyncStatus('syncing')
+        try {
+          const remote = await loadFromGist()
+          setReceipts(remote.length > 0 ? remote : (() => {
+            const s = seedData()
+            return s
+          })())
+          setSyncStatus('synced')
+        } catch (e) {
+          setSyncStatus('error')
+          setSyncError(e.message)
+          // Fall back to localStorage
+          const raw = localStorage.getItem(LOCAL_KEY)
+          if (raw) setReceipts(JSON.parse(raw))
+          else { const s=seedData(); setReceipts(s) }
+        }
+      } else {
+        // localStorage only mode
+        try {
+          const raw = localStorage.getItem(LOCAL_KEY)
+          if (raw) setReceipts(JSON.parse(raw))
+          else { const s=seedData(); setReceipts(s); localStorage.setItem(LOCAL_KEY,JSON.stringify(s)) }
+        } catch { setReceipts([]) }
+      }
+    }
+    init()
+  }, [gistConnected])
 
+  // ── Auto-save: local + debounced Gist ──────────────────────
   useEffect(() => {
-    if (receipts.length > 0) localStorage.setItem(STORAGE_KEY, JSON.stringify(receipts))
+    if (!receipts.length) return
+    localStorage.setItem(LOCAL_KEY, JSON.stringify(receipts))
+
+    if (isConfigured()) {
+      clearTimeout(saveTimeout.current)
+      saveTimeout.current = setTimeout(async () => {
+        setSyncStatus('syncing')
+        try {
+          await saveToGist(receipts)
+          setSyncStatus('synced')
+        } catch (e) {
+          setSyncStatus('error')
+          setSyncError(e.message)
+        }
+      }, 1500)  // debounce 1.5s
+    }
   }, [receipts])
 
-  const showToast = useCallback((msg, type = 'success') => {
+  // ── Toast helper ────────────────────────────────────────────
+  const showToast = useCallback((msg, type='success') => {
     setToast({ msg, type }); setTimeout(() => setToast(null), 3000)
   }, [])
 
-  const addReceipt    = useCallback((data) => { setReceipts(p => [{ ...data, id: uuidv4() }, ...p]); showToast('Receipt added ✓') }, [showToast])
-  const updateReceipt = useCallback((data) => { setReceipts(p => p.map(r => r.id === data.id ? data : r)); showToast('Receipt updated ✓') }, [showToast])
-  const deleteReceipt = useCallback((id)   => { setReceipts(p => p.filter(r => r.id !== id)); showToast('Deleted', 'error') }, [showToast])
+  // ── CRUD ────────────────────────────────────────────────────
+  const addReceipt    = useCallback((d) => { setReceipts(p => [{ ...d, id:uuidv4() }, ...p]); showToast('Receipt added ✓') }, [showToast])
+  const updateReceipt = useCallback((d) => { setReceipts(p => p.map(r => r.id===d.id ? d : r)); showToast('Receipt updated ✓') }, [showToast])
+  const deleteReceipt = useCallback((id) => { setReceipts(p => p.filter(r => r.id!==id)); showToast('Deleted', 'error') }, [showToast])
 
+  // ── Export / Import ─────────────────────────────────────────
   const exportCSV = () => {
-    const header = 'Date,Merchant,Category,Amount,Currency,Description,ImageRef\n'
-    const rows = receipts.map(r =>
-      `${r.date},"${r.merchant}","${CATEGORIES.find(c=>c.id===r.category)?.label||r.category}",${r.amount},${r.currency||'MYR'},"${r.description||''}","${r.imageNote||''}"`
+    const header = 'Date,Merchant,Category,Amount,Currency,Description\n'
+    const rows   = receipts.map(r =>
+      `${r.date},"${r.merchant}","${CATEGORIES.find(c=>c.id===r.category)?.label||r.category}",${r.amount},${r.currency||'MYR'},"${r.description||''}"`
     ).join('\n')
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(new Blob([header+rows], { type: 'text/csv' }))
-    a.download = 'receipts.csv'; a.click()
+    dl(new Blob([header+rows],{type:'text/csv'}), 'receipts.csv')
     showToast('Exported CSV ✓')
   }
-
   const exportJSON = () => {
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(receipts, null, 2)], { type: 'application/json' }))
-    a.download = 'receipts-backup.json'; a.click()
+    dl(new Blob([JSON.stringify(receipts,null,2)],{type:'application/json'}), 'receipts-backup.json')
     showToast('Backup exported ✓')
   }
-
   const importJSON = (e) => {
-    const file = e.target.files[0]; if (!file) return
+    const file = e.target.files[0]; if(!file) return
     const reader = new FileReader()
-    reader.onload = (ev) => {
+    reader.onload = ev => {
       try {
         const data = JSON.parse(ev.target.result)
         if (Array.isArray(data)) {
           setReceipts(prev => {
-            const ids = new Set(prev.map(r => r.id))
-            return [...data.filter(r => !ids.has(r.id)), ...prev]
+            const ids = new Set(prev.map(r=>r.id))
+            return [...data.filter(r=>!ids.has(r.id)), ...prev]
           })
           showToast(`Imported ${data.length} records ✓`)
         }
       } catch { showToast('Invalid JSON', 'error') }
     }
-    reader.readAsText(file); e.target.value = ''
+    reader.readAsText(file); e.target.value=''
   }
-
+  const dl = (blob, name) => {
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click()
+  }
   const clearAll = () => {
     if (confirm('Clear ALL receipts? Cannot be undone.')) {
-      setReceipts([]); localStorage.removeItem(STORAGE_KEY); showToast('All data cleared', 'error')
+      setReceipts([]); localStorage.removeItem(LOCAL_KEY); showToast('All data cleared','error')
     }
   }
 
-  const navItems = [
-    { id: 'dashboard', label: 'Dashboard',    icon: LayoutDashboard },
-    { id: 'receipts',  label: 'Transactions', icon: Receipt },
-    { id: 'onedrive',  label: 'OneDrive',     icon: CloudIcon },
-  ]
+  // ── Gist handlers ───────────────────────────────────────────
+  const handleGistConnected = ({ user, gistId }) => {
+    setGistConnected(true)
+    setGhUser(user)
+    showToast(`Connected to GitHub as @${user.login} ✓`)
+  }
+  const handleDisconnect = () => {
+    if (confirm('Disconnect GitHub Gist? Your local data stays — it just won\'t sync to GitHub anymore.')) {
+      clearSettings()
+      setGistConnected(false)
+      setGhUser(null)
+      setSyncStatus('idle')
+      showToast('Disconnected from GitHub', 'error')
+    }
+  }
+  const handleManualSync = async () => {
+    if (!isConfigured()) return
+    setSyncStatus('syncing')
+    try {
+      await saveToGist(receipts)
+      setSyncStatus('synced')
+      showToast('Synced to GitHub ✓')
+    } catch (e) {
+      setSyncStatus('error')
+      setSyncError(e.message)
+      showToast('Sync failed: ' + e.message, 'error')
+    }
+  }
 
+  // ── Computed ─────────────────────────────────────────────────
   const totalThisMonth = receipts
     .filter(r => r.date?.startsWith(new Date().toISOString().slice(0,7)))
-    .reduce((s, r) => s + Number(r.amount), 0)
+    .reduce((s,r) => s+Number(r.amount), 0)
 
-  const pageTitle = { dashboard: '📊 Dashboard Overview', receipts: '🧾 All Transactions', onedrive: '☁️ OneDrive Receipts' }
+  const navItems = [
+    { id:'dashboard', label:'Dashboard',    icon:LayoutDashboard },
+    { id:'receipts',  label:'Transactions', icon:Receipt },
+    { id:'onedrive',  label:'OneDrive',     icon:CloudIcon },
+  ]
+  const pageTitle = {
+    dashboard:'📊 Dashboard Overview',
+    receipts: '🧾 All Transactions',
+    onedrive: '☁️ OneDrive Receipts',
+  }
 
+  // ── Sync status badge ─────────────────────────────────────────
+  const SyncBadge = () => {
+    if (!gistConnected) return null
+    const cfg = {
+      syncing:{ color:'#f5a623', icon:<Loader size={10} style={{animation:'spin 1s linear infinite'}}/>, label:'Saving…' },
+      synced: { color:'#22c55e', icon:'✓',   label:'Saved to GitHub' },
+      error:  { color:'#ef4444', icon:'⚠',   label:'Sync error' },
+      idle:   { color:'#6b82a8', icon:<Cloud size={10}/>, label:'GitHub Gist' },
+    }[syncStatus] || {}
+    return (
+      <div style={{ display:'flex', alignItems:'center', gap:5, fontSize:11,
+        color:cfg.color, padding:'3px 8px', borderRadius:20,
+        background:`${cfg.color}12`, border:`1px solid ${cfg.color}30` }}>
+        {cfg.icon} {cfg.label}
+      </div>
+    )
+  }
+
+  // ─────────────────────────────────────────────────────────────
   return (
-    <div style={{ display: 'flex', minHeight: '100vh' }}>
+    <div style={{ display:'flex', minHeight:'100vh' }}>
       {sidebarOpen && (
-        <div onClick={() => setSidebarOpen(false)}
-          style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', zIndex:40, backdropFilter:'blur(2px)' }} />
+        <div onClick={()=>setSidebarOpen(false)}
+          style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', zIndex:40, backdropFilter:'blur(2px)' }}/>
       )}
 
-      {/* Sidebar */}
+      {/* ── Sidebar ── */}
       <aside className="sidebar" style={{
-        width: 240, flexShrink: 0, background: 'var(--bg-card)',
-        borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column',
-        position: 'fixed', top: 0, left: sidebarOpen ? 0 : -260, bottom: 0, zIndex: 50,
-        transition: 'left 0.3s ease',
+        width:240, flexShrink:0, background:'var(--bg-card)',
+        borderRight:'1px solid var(--border)', display:'flex', flexDirection:'column',
+        position:'fixed', top:0, left:sidebarOpen?0:-260, bottom:0, zIndex:50,
+        transition:'left 0.3s ease',
       }}>
         {/* Logo */}
-        <div style={{ padding: '24px 20px 16px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ width:36, height:36, borderRadius:10, background:'var(--accent-dim)', border:'1px solid var(--accent)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 }}>🧾</div>
+        <div style={{ padding:'20px 16px 14px', borderBottom:'1px solid var(--border)' }}>
+          <div style={{ display:'flex', alignItems:'center', gap:9 }}>
+            <div style={{ width:34, height:34, borderRadius:9, background:'var(--accent-dim)', border:'1px solid var(--accent)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:17 }}>🧾</div>
             <div>
-              <div style={{ fontWeight:700, fontSize:15, color:'var(--text-primary)', letterSpacing:'-0.3px' }}>Resit</div>
-              <div style={{ fontSize:11, color:'var(--text-muted)', marginTop:-2 }}>Dashboard</div>
+              <div style={{ fontWeight:700, fontSize:14, color:'var(--text-primary)' }}>Resit</div>
+              <div style={{ fontSize:10, color:'var(--text-muted)', marginTop:-1 }}>Dashboard</div>
             </div>
           </div>
         </div>
 
         {/* Month summary */}
-        <div style={{ margin:'16px 12px', padding:'12px 14px', background:'var(--accent-dim)', borderRadius:10, border:'1px solid rgba(245,166,35,0.2)' }}>
-          <div style={{ fontSize:11, color:'var(--text-muted)', marginBottom:4 }}>This Month</div>
-          <div style={{ fontSize:20, fontWeight:700, color:'var(--accent)', fontFamily:'JetBrains Mono' }}>RM {totalThisMonth.toFixed(2)}</div>
-          <div style={{ fontSize:11, color:'var(--text-dim)', marginTop:2 }}>
-            {receipts.filter(r => r.date?.startsWith(new Date().toISOString().slice(0,7))).length} transactions
+        <div style={{ margin:'12px 10px 4px', padding:'11px 13px', background:'var(--accent-dim)', borderRadius:9, border:'1px solid rgba(245,166,35,0.2)' }}>
+          <div style={{ fontSize:10, color:'var(--text-muted)', marginBottom:3 }}>This Month</div>
+          <div style={{ fontSize:19, fontWeight:700, color:'var(--accent)', fontFamily:'JetBrains Mono' }}>RM {totalThisMonth.toFixed(2)}</div>
+          <div style={{ fontSize:10, color:'var(--text-dim)', marginTop:1 }}>
+            {receipts.filter(r=>r.date?.startsWith(new Date().toISOString().slice(0,7))).length} transactions
           </div>
         </div>
 
         {/* Nav */}
-        <nav style={{ padding:'8px 12px', flex:1 }}>
+        <nav style={{ padding:'8px 10px', flex:1 }}>
           {navItems.map(item => {
-            const Icon = item.icon; const active = tab === item.id
+            const Icon=item.icon; const active=tab===item.id
             return (
-              <button key={item.id} onClick={() => { setTab(item.id); setSidebarOpen(false) }}
+              <button key={item.id} onClick={()=>{setTab(item.id);setSidebarOpen(false)}}
                 style={{
-                  display:'flex', alignItems:'center', gap:10, width:'100%',
-                  padding:'10px 12px', borderRadius:8, border:'none', cursor:'pointer',
-                  marginBottom:2, fontFamily:'Sora, sans-serif', fontSize:14, fontWeight: active?600:400,
-                  background: active ? (item.id==='onedrive' ? '#0078d418' : 'var(--accent-dim)') : 'transparent',
-                  color: active ? (item.id==='onedrive' ? '#0078d4' : 'var(--accent)') : 'var(--text-muted)',
+                  display:'flex', alignItems:'center', gap:9, width:'100%',
+                  padding:'9px 11px', borderRadius:7, border:'none', cursor:'pointer', marginBottom:1,
+                  fontFamily:'Sora,sans-serif', fontSize:13, fontWeight:active?600:400,
+                  background: active ? (item.id==='onedrive'?'#0078d418':'var(--accent-dim)') : 'transparent',
+                  color:      active ? (item.id==='onedrive'?'#0078d4':'var(--accent)') : 'var(--text-muted)',
                   transition:'all 0.2s',
                 }}>
-                <Icon size={16} strokeWidth={active?2.5:1.8} />
+                <Icon size={15} strokeWidth={active?2.5:1.8}/>
                 {item.label}
-                {item.id === 'onedrive' && (
-                  <span style={{ marginLeft:'auto', fontSize:9, padding:'2px 5px', borderRadius:3, background:'#0078d418', color:'#0078d4', fontWeight:700 }}>LINKED</span>
-                )}
               </button>
             )
           })}
         </nav>
 
-        {/* OneDrive quick access */}
-        <div style={{ margin:'0 12px 8px', padding:'10px 12px', background:'#0078d410', borderRadius:8, border:'1px solid #0078d420' }}>
-          <div style={{ fontSize:11, color:'var(--text-muted)', marginBottom:4, fontWeight:600 }}>☁️ OneDrive Folder</div>
-          <a href={ONEDRIVE_FOLDER_URL} target="_blank" rel="noopener noreferrer"
-            style={{ fontSize:11, color:'#0078d4', textDecoration:'none', display:'flex', alignItems:'center', gap:4 }}>
-            Open in browser →
-          </a>
+        {/* ── GitHub Gist storage section ── */}
+        <div style={{ margin:'0 10px 8px', borderRadius:9, border:'1px solid var(--border)', overflow:'hidden' }}>
+          <div style={{ padding:'9px 11px', background:'var(--bg-primary)', borderBottom:'1px solid var(--border)' }}>
+            <div style={{ fontSize:10, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>Storage</div>
+            {gistConnected ? (
+              <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
+                <div style={{ display:'flex', alignItems:'center', gap:5, fontSize:11 }}>
+                  <div style={{ width:6, height:6, borderRadius:'50%', background:syncStatus==='error'?'#ef4444':syncStatus==='syncing'?'#f5a623':'#22c55e' }}/>
+                  <span style={{ color:'var(--text-primary)', fontWeight:600 }}>
+                    {syncStatus==='syncing' ? 'Saving to Gist…'
+                      : syncStatus==='error' ? 'Sync error'
+                      : 'GitHub Gist ✓'}
+                  </span>
+                </div>
+                {getGistUrl() && (
+                  <a href={getGistUrl()} target="_blank" rel="noopener noreferrer"
+                    style={{ fontSize:10, color:'#3b82f6', textDecoration:'none' }}>
+                    View Gist →
+                  </a>
+                )}
+                <div style={{ display:'flex', gap:4, marginTop:2 }}>
+                  <button onClick={handleManualSync} disabled={syncStatus==='syncing'}
+                    style={{ ...smallBtnStyle('#22c55e'), flex:1 }}>
+                    <RefreshCw size={10}/> Sync
+                  </button>
+                  <button onClick={handleDisconnect} style={{ ...smallBtnStyle('#ef4444'), flex:1 }}>
+                    Disconnect
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div style={{ fontSize:11, color:'var(--text-dim)', marginBottom:6, lineHeight:1.4 }}>
+                  Data only in browser.<br/>Connect GitHub to save permanently.
+                </div>
+                <button onClick={()=>setShowGistSetup(true)}
+                  style={{ display:'flex', alignItems:'center', gap:5, width:'100%', justifyContent:'center',
+                    background:'#24292e', border:'1px solid #444', color:'#fff',
+                    borderRadius:6, padding:'6px 8px', cursor:'pointer', fontFamily:'Sora', fontSize:11, fontWeight:700 }}>
+                  <Github size={11}/> Connect GitHub
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Actions */}
-        <div style={{ padding:'12px', borderTop:'1px solid var(--border)' }}>
-          <button onClick={exportCSV} style={actionBtnStyle}><Download size={13} /> Export CSV</button>
-          <button onClick={exportJSON} style={actionBtnStyle}><Download size={13} /> Backup JSON</button>
+        <div style={{ padding:'10px', borderTop:'1px solid var(--border)' }}>
+          <button onClick={exportCSV}  style={actionBtnStyle}><Download size={12}/> Export CSV</button>
+          <button onClick={exportJSON} style={actionBtnStyle}><Download size={12}/> Backup JSON</button>
           <label style={{ ...actionBtnStyle, display:'flex', cursor:'pointer' }}>
-            <Upload size={13} /> Import JSON
-            <input type="file" accept=".json" onChange={importJSON} style={{ display:'none' }} />
+            <Upload size={12}/> Import JSON
+            <input type="file" accept=".json" onChange={importJSON} style={{ display:'none' }}/>
           </label>
-          <button onClick={clearAll} style={{ ...actionBtnStyle, color:'#ef4444' }}><Trash2 size={13} /> Clear All</button>
+          <button onClick={clearAll}   style={{ ...actionBtnStyle, color:'#ef4444' }}><Trash2 size={12}/> Clear All</button>
         </div>
       </aside>
 
-      {/* Main */}
+      {/* ── Main ── */}
       <div className="main-area" style={{ flex:1, marginLeft:0, display:'flex', flexDirection:'column', minHeight:'100vh' }}>
         {/* Topbar */}
         <header style={{
           position:'sticky', top:0, zIndex:30,
           background:'rgba(8,12,20,0.9)', backdropFilter:'blur(12px)',
-          borderBottom:'1px solid var(--border)', padding:'0 24px',
-          display:'flex', alignItems:'center', gap:16, height:60,
+          borderBottom:'1px solid var(--border)', padding:'0 20px',
+          display:'flex', alignItems:'center', gap:12, height:56,
         }}>
-          <button onClick={() => setSidebarOpen(v => !v)}
+          <button onClick={()=>setSidebarOpen(v=>!v)}
             style={{ background:'none', border:'none', color:'var(--text-muted)', cursor:'pointer', padding:4 }}>
-            <Menu size={20} />
+            <Menu size={19}/>
           </button>
-          <div style={{ flex:1 }}>
-            <h1 style={{ fontSize:15, fontWeight:600, color:'var(--text-primary)' }}>{pageTitle[tab]}</h1>
-          </div>
+          <h1 style={{ fontSize:14, fontWeight:600, color:'var(--text-primary)', flex:1 }}>{pageTitle[tab]}</h1>
+          <SyncBadge/>
           {tab !== 'onedrive' && (
-            <button onClick={() => { setEditItem(null); setShowModal(true) }}
-              style={{
-                display:'flex', alignItems:'center', gap:6,
-                background:'var(--accent)', color:'#000', border:'none', borderRadius:8,
-                padding:'7px 14px', fontFamily:'Sora', fontWeight:600, fontSize:13, cursor:'pointer',
-              }}>
-              <Plus size={15} strokeWidth={2.5} /> Add Receipt
+            <button onClick={()=>{ setEditItem(null); setShowModal(true) }}
+              style={{ display:'flex', alignItems:'center', gap:5,
+                background:'var(--accent)', color:'#000', border:'none', borderRadius:7,
+                padding:'7px 13px', fontFamily:'Sora', fontWeight:700, fontSize:12, cursor:'pointer' }}>
+              <Plus size={13} strokeWidth={2.5}/> Add
             </button>
           )}
         </header>
 
-        {/* Page content */}
-        <main style={{ flex:1, padding:'24px', overflowY:'auto' }} className="animate-in">
-          {tab === 'dashboard' && (
+        {/* Page */}
+        <main style={{ flex:1, padding:'20px', overflowY:'auto' }} className="animate-in">
+          {tab==='dashboard' && (
             <Dashboard receipts={receipts} filterMonth={filterMonth} setFilterMonth={setFilterMonth}
               filterCategory={filterCategory} setFilterCategory={setFilterCategory}
-              onEdit={(r) => { setEditItem(r); setShowModal(true) }}
-              onDelete={deleteReceipt}
-              onAddClick={() => { setEditItem(null); setShowModal(true) }} />
+              onEdit={r=>{ setEditItem(r); setShowModal(true) }}
+              onDelete={deleteReceipt} onAddClick={()=>{ setEditItem(null); setShowModal(true) }}/>
           )}
-          {tab === 'receipts' && (
+          {tab==='receipts' && (
             <ReceiptList receipts={receipts} search={search} setSearch={setSearch}
               filterMonth={filterMonth} setFilterMonth={setFilterMonth}
               filterCategory={filterCategory} setFilterCategory={setFilterCategory}
-              onEdit={(r) => { setEditItem(r); setShowModal(true) }}
-              onDelete={deleteReceipt} />
+              onEdit={r=>{ setEditItem(r); setShowModal(true) }} onDelete={deleteReceipt}/>
           )}
-          {tab === 'onedrive' && (
-            <div style={{ maxWidth: 700 }}>
-              <div style={{ marginBottom:16 }}>
-                <p style={{ color:'var(--text-muted)', fontSize:13, marginBottom:4 }}>
-                  AI reads your receipt images from OneDrive and extracts the data automatically.
-                </p>
-                <p style={{ color:'var(--text-dim)', fontSize:12 }}>
-                  📁 Folder must be shared as <strong style={{color:'var(--text-muted)'}}>Anyone with the link can view</strong>.
-                  Click <strong style={{color:'var(--text-muted)'}}>Extract with AI</strong> on any receipt image → then <strong style={{color:'var(--accent)'}}>Add to Dashboard</strong>.
-                </p>
-              </div>
-              <OneDrivePanel onExtracted={(data) => {
-                // Pre-fill the add modal with AI-extracted data
-                setEditItem({
-                  ...data,
-                  id: undefined, // new record
-                })
+          {tab==='onedrive' && (
+            <div style={{ maxWidth:680 }}>
+              <p style={{ color:'var(--text-muted)', fontSize:13, marginBottom:16 }}>
+                Open your OneDrive folder, download receipt images, then drop them below.
+                Claude AI reads each receipt and adds it to your dashboard.
+              </p>
+              <OneDrivePanel onExtracted={data => {
+                setEditItem({ ...data, id:undefined })
                 setShowModal(true)
-                showToast('Receipt data extracted — review and save ✓')
-              }} />
+                showToast('Receipt extracted — review and save ✓')
+              }}/>
             </div>
           )}
         </main>
       </div>
 
+      {/* Modals */}
       {showModal && (
         <AddReceiptModal item={editItem}
-          onClose={() => { setShowModal(false); setEditItem(null) }}
-          onSave={(data) => {
-            if (editItem) updateReceipt(data); else addReceipt(data)
+          onClose={()=>{ setShowModal(false); setEditItem(null) }}
+          onSave={data => {
+            if (editItem?.id) updateReceipt(data); else addReceipt(data)
             setShowModal(false); setEditItem(null)
-          }} />
+          }}/>
+      )}
+      {showGistSetup && (
+        <GistSetupModal
+          onClose={()=>setShowGistSetup(false)}
+          onConnected={handleGistConnected}/>
       )}
 
+      {/* Toast */}
       {toast && (
         <div style={{
-          position:'fixed', bottom:24, right:24, zIndex:100,
+          position:'fixed', bottom:20, right:20, zIndex:200,
           background: toast.type==='error' ? '#1a0a0a' : '#0a1a0f',
           border:`1px solid ${toast.type==='error' ? '#ef4444' : '#22c55e'}`,
           color: toast.type==='error' ? '#ef4444' : '#22c55e',
-          borderRadius:10, padding:'12px 18px', fontSize:13, fontWeight:500,
+          borderRadius:9, padding:'11px 16px', fontSize:13, fontWeight:500,
           boxShadow:'var(--shadow-lg)', animation:'fadeUp 0.3s ease'
         }}>{toast.msg}</div>
       )}
@@ -302,14 +439,21 @@ export default function App() {
           .sidebar { left: 0 !important; }
           .main-area { margin-left: 240px !important; }
         }
+        @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
       `}</style>
     </div>
   )
 }
 
 const actionBtnStyle = {
-  display:'flex', alignItems:'center', gap:7, width:'100%',
+  display:'flex', alignItems:'center', gap:6, width:'100%',
   background:'transparent', border:'none', color:'var(--text-muted)',
-  padding:'8px 10px', borderRadius:6, cursor:'pointer', fontSize:12,
-  fontFamily:'Sora, sans-serif', marginBottom:2, transition:'color 0.2s',
+  padding:'7px 9px', borderRadius:5, cursor:'pointer', fontSize:11,
+  fontFamily:'Sora,sans-serif', marginBottom:1, transition:'color 0.2s',
 }
+const smallBtnStyle = (color) => ({
+  display:'flex', alignItems:'center', justifyContent:'center', gap:4,
+  background:`${color}12`, border:`1px solid ${color}25`, color,
+  borderRadius:5, padding:'4px 6px', cursor:'pointer',
+  fontFamily:'Sora', fontSize:10, fontWeight:600,
+})
