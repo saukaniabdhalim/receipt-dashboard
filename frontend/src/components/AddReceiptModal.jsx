@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { CATEGORIES } from '../App.jsx'
-import { X, Camera, FileText } from 'lucide-react'
+import { X, CloudIcon, ChevronDown, ChevronUp } from 'lucide-react'
+import OneDrivePanel from './OneDrivePanel.jsx'
 
 const today = () => new Date().toISOString().split('T')[0]
 
@@ -10,6 +11,7 @@ export default function AddReceiptModal({ item, onClose, onSave }) {
     amount: '', description: '', currency: 'MYR', imageNote: ''
   })
   const [errors, setErrors] = useState({})
+  const [showOneDrive, setShowOneDrive] = useState(false)
 
   useEffect(() => {
     if (item) setForm({ ...item, amount: String(item.amount) })
@@ -21,7 +23,7 @@ export default function AddReceiptModal({ item, onClose, onSave }) {
     const e = {}
     if (!form.date) e.date = 'Required'
     if (!form.merchant.trim()) e.merchant = 'Required'
-    if (!form.amount || isNaN(Number(form.amount)) || Number(form.amount) <= 0) e.amount = 'Must be a positive number'
+    if (!form.amount || isNaN(Number(form.amount)) || Number(form.amount) <= 0) e.amount = 'Must be > 0'
     setErrors(e)
     return Object.keys(e).length === 0
   }
@@ -31,16 +33,28 @@ export default function AddReceiptModal({ item, onClose, onSave }) {
     onSave({ ...form, amount: Number(form.amount), id: item?.id })
   }
 
+  const handleSelectFile = (file) => {
+    // Use webUrl as the reference, fallback to name
+    const ref = file.webUrl || file['@microsoft.graph.downloadUrl'] || file.name
+    set('imageNote', ref)
+    // Auto-fill merchant from filename if empty
+    if (!form.merchant) {
+      const name = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ')
+      set('merchant', name)
+    }
+    setShowOneDrive(false)
+  }
+
   return (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 200,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
-      animation: 'fadeIn 0.2s ease'
+      animation: 'fadeIn 0.2s ease', padding: '16px'
     }} onClick={e => { if (e.target === e.currentTarget) onClose() }}>
       <div style={{
         background: 'var(--bg-card)', border: '1px solid var(--border)',
-        borderRadius: 16, width: '90%', maxWidth: 480, maxHeight: '90vh',
+        borderRadius: 16, width: '100%', maxWidth: 520, maxHeight: '92vh',
         overflow: 'auto', boxShadow: 'var(--shadow-lg)',
         animation: 'fadeUp 0.25s ease'
       }}>
@@ -51,7 +65,7 @@ export default function AddReceiptModal({ item, onClose, onSave }) {
               {item ? '✏️ Edit Receipt' : '➕ New Receipt'}
             </h2>
             <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-              {item ? 'Update transaction details' : 'Add a new transaction manually'}
+              {item ? 'Update transaction details' : 'Add manually or link from OneDrive'}
             </p>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4 }}>
@@ -61,7 +75,8 @@ export default function AddReceiptModal({ item, onClose, onSave }) {
 
         {/* Form */}
         <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {/* Date + Amount row */}
+
+          {/* Date + Amount */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
               <label style={labelStyle}>Date *</label>
@@ -72,8 +87,7 @@ export default function AddReceiptModal({ item, onClose, onSave }) {
             <div>
               <label style={labelStyle}>Amount (RM) *</label>
               <input type="number" step="0.01" min="0" value={form.amount}
-                onChange={e => set('amount', e.target.value)}
-                placeholder="0.00"
+                onChange={e => set('amount', e.target.value)} placeholder="0.00"
                 style={{ ...inputStyle, width: '100%', fontFamily: 'JetBrains Mono', borderColor: errors.amount ? '#ef4444' : undefined }} />
               {errors.amount && <div style={errStyle}>{errors.amount}</div>}
             </div>
@@ -103,7 +117,7 @@ export default function AddReceiptModal({ item, onClose, onSave }) {
                     fontWeight: form.category === cat.id ? 600 : 400,
                   }}>
                   <span>{cat.emoji}</span>
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat.label}</span>
+                  <span className="truncate">{cat.label}</span>
                 </button>
               ))}
             </div>
@@ -113,21 +127,60 @@ export default function AddReceiptModal({ item, onClose, onSave }) {
           <div>
             <label style={labelStyle}>Description / Notes</label>
             <textarea value={form.description} onChange={e => set('description', e.target.value)}
-              placeholder="Optional notes about this receipt…" rows={2}
+              placeholder="Optional notes…" rows={2}
               style={{ ...inputStyle, width: '100%', resize: 'vertical' }} />
           </div>
 
-          {/* Image note */}
-          <div style={{ background: 'var(--bg-input)', borderRadius: 8, padding: '12px', border: '1px dashed var(--border)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <Camera size={14} color="var(--text-muted)" />
-              <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>Receipt Image Reference</span>
-            </div>
+          {/* OneDrive section */}
+          <div>
+            <label style={labelStyle}>Receipt Image — OneDrive</label>
+
+            {/* Link from OneDrive toggle button */}
+            <button onClick={() => setShowOneDrive(v => !v)}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                width: '100%', padding: '10px 14px', marginBottom: 8,
+                background: showOneDrive ? '#0078d415' : 'var(--bg-input)',
+                border: `1px solid ${showOneDrive ? '#0078d4' : 'var(--border)'}`,
+                borderRadius: 8, cursor: 'pointer', fontFamily: 'Sora', transition: 'all 0.2s',
+              }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 15 }}>☁️</span>
+                <span style={{ fontSize: 13, color: showOneDrive ? '#0078d4' : 'var(--text-muted)', fontWeight: 600 }}>
+                  Browse OneDrive Receipts Folder
+                </span>
+              </div>
+              {showOneDrive
+                ? <ChevronUp size={14} color="#0078d4" />
+                : <ChevronDown size={14} color="var(--text-muted)" />
+              }
+            </button>
+
+            {/* Inline OneDrive Panel */}
+            {showOneDrive && (
+              <div style={{ marginBottom: 10, animation: 'fadeUp 0.2s ease' }}>
+                <OneDrivePanel onSelectFile={handleSelectFile} compact={true} />
+              </div>
+            )}
+
+            {/* Manual input / selected file */}
             <input value={form.imageNote} onChange={e => set('imageNote', e.target.value)}
-              placeholder="WhatsApp msg ID, OneDrive link, or filename…"
+              placeholder="OneDrive file link will appear here after selection, or paste manually…"
               style={{ ...inputStyle, width: '100%', fontSize: 12 }} />
+
+            {form.imageNote && (
+              <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 11, color: '#22c55e' }}>✓ File linked:</span>
+                <a href={form.imageNote} target="_blank" rel="noopener noreferrer"
+                  style={{ fontSize: 11, color: '#0078d4', textDecoration: 'none' }}
+                  className="truncate">
+                  {form.imageNote}
+                </a>
+              </div>
+            )}
+
             <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>
-              💡 Paste a link from OneDrive or note the WhatsApp group message reference
+              💡 Click <strong style={{color:'var(--text-muted)'}}>Browse</strong> → select a receipt image from your OneDrive folder
             </div>
           </div>
         </div>
@@ -150,6 +203,13 @@ export default function AddReceiptModal({ item, onClose, onSave }) {
   )
 }
 
-const labelStyle = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }
-const inputStyle = { background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: 8, padding: '9px 12px', fontFamily: 'Sora, sans-serif', fontSize: 13, outline: 'none', boxSizing: 'border-box' }
+const labelStyle = {
+  display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)',
+  marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em'
+}
+const inputStyle = {
+  background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)',
+  borderRadius: 8, padding: '9px 12px', fontFamily: 'Sora, sans-serif', fontSize: 13,
+  outline: 'none', boxSizing: 'border-box'
+}
 const errStyle = { fontSize: 11, color: '#ef4444', marginTop: 4 }
