@@ -5,7 +5,7 @@ import ReceiptList from './components/ReceiptList.jsx'
 import AddReceiptModal from './components/AddReceiptModal.jsx'
 import OneDrivePanel from './components/OneDrivePanel.jsx'
 import { LayoutDashboard, Receipt, CloudIcon, Plus, Menu, Download, Upload, Trash2 } from 'lucide-react'
-import { ONEDRIVE_FOLDER_URL } from './services/oneDriveService.js'
+import { SHARE_URL as ONEDRIVE_FOLDER_URL } from './services/oneDriveService.js'
 
 export const CATEGORIES = [
   { id: 'food',          label: 'Food & Dining',    color: '#f97316', emoji: '🍜' },
@@ -256,17 +256,21 @@ export default function App() {
             <div style={{ maxWidth: 700 }}>
               <div style={{ marginBottom:16 }}>
                 <p style={{ color:'var(--text-muted)', fontSize:13, marginBottom:4 }}>
-                  Your linked OneDrive receipts folder. Browse files and attach them to transactions.
+                  AI reads your receipt images from OneDrive and extracts the data automatically.
                 </p>
                 <p style={{ color:'var(--text-dim)', fontSize:12 }}>
-                  📁 Folder must be shared as <strong style={{color:'var(--text-muted)'}}>Anyone with the link can view</strong> for browsing to work.
+                  📁 Folder must be shared as <strong style={{color:'var(--text-muted)'}}>Anyone with the link can view</strong>.
+                  Click <strong style={{color:'var(--text-muted)'}}>Extract with AI</strong> on any receipt image → then <strong style={{color:'var(--accent)'}}>Add to Dashboard</strong>.
                 </p>
               </div>
-              <OneDrivePanel onSelectFile={(file) => {
-                // Open add modal with file pre-linked
-                setEditItem(null)
+              <OneDrivePanel onExtracted={(data) => {
+                // Pre-fill the add modal with AI-extracted data
+                setEditItem({
+                  ...data,
+                  id: undefined, // new record
+                })
                 setShowModal(true)
-                // Note: imageNote will be set in modal via the panel
+                showToast('Receipt data extracted — review and save ✓')
               }} />
             </div>
           )}
