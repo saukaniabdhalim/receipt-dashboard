@@ -70,6 +70,7 @@ export default function App() {
   const [syncError,       setSyncError]      = useState('')
   const [ghUser,          setGhUser]         = useState(null)
   const saveTimeout = useRef(null)
+  const [cameraFile, setCameraFile] = useState(null)
 
   // ── Init: load data ─────────────────────────────────────────
   useEffect(() => {
@@ -397,11 +398,14 @@ export default function App() {
                 Open your OneDrive folder, download receipt images, then drop them below.
                 Claude AI reads each receipt and adds it to your dashboard.
               </p>
-              <OneDrivePanel onExtracted={data => {
-                setEditItem({ ...data, id:undefined })
-                setShowModal(true)
-                showToast('Receipt extracted — review and save ✓')
-              }}/>
+              <OneDrivePanel
+                cameraFile={cameraFile}
+                onCameraFileConsumed={() => setCameraFile(null)}
+                onExtracted={data => {
+                  setEditItem({ ...data, id:undefined })
+                  setShowModal(true)
+                  showToast('Receipt extracted — review and save ✓')
+                }}/>
             </div>
           )}
         </main>
@@ -434,6 +438,15 @@ export default function App() {
         }}>{toast.msg}</div>
       )}
 
+      {/* ── Mobile Camera FAB ── */}
+      <MobileCameraFAB onCapture={(file) => {
+        // Add file to OneDrive panel via tab switch + state
+        setTab('onedrive')
+        showToast('📸 Photo captured — tap Extract with AI')
+        // We'll pass it through a small state trick
+        setCameraFile(file)
+      }} />
+
       <style>{`
         @media (min-width: 768px) {
           .sidebar { left: 0 !important; }
@@ -442,6 +455,35 @@ export default function App() {
         @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
       `}</style>
     </div>
+  )
+}
+
+// ── Inline mobile camera FAB ──────────────────────────────────
+function MobileCameraFAB({ onCapture }) {
+  const inputRef = React.useRef()
+  const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)
+  if (!isMobile) return null
+  return (
+    <>
+      <input ref={inputRef} type="file" accept="image/*" capture="environment"
+        style={{ display:'none' }}
+        onChange={e => { if (e.target.files?.[0]) { onCapture(e.target.files[0]); e.target.value='' } }} />
+      <button onClick={() => inputRef.current?.click()} title="Scan receipt"
+        style={{
+          position:'fixed', bottom:24, right:20, zIndex:150,
+          width:60, height:60, borderRadius:'50%',
+          background:'linear-gradient(135deg,#6366f1,#a78bfa)',
+          border:'3px solid rgba(255,255,255,0.15)',
+          cursor:'pointer', color:'#fff',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          boxShadow:'0 6px 28px rgba(99,102,241,0.55)',
+        }}>
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+      </button>
+    </>
   )
 }
 
@@ -457,3 +499,40 @@ const smallBtnStyle = (color) => ({
   borderRadius:5, padding:'4px 6px', cursor:'pointer',
   fontFamily:'Sora', fontSize:10, fontWeight:600,
 })
+
+// ── Mobile Camera FAB (floating action button) ────────────────
+// This is exported so it can be used if needed, but it's embedded
+// directly into App via the CameraFAB component below.
+export function CameraFAB({ onCapture }) {
+  const inputRef = React.useRef()
+  const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)
+  if (!isMobile) return null
+  return (
+    <>
+      <input ref={inputRef} type="file" accept="image/*" capture="environment"
+        style={{ display:'none' }}
+        onChange={e => { if (e.target.files[0]) { onCapture(e.target.files[0]); e.target.value='' } }} />
+      <button
+        onClick={() => inputRef.current?.click()}
+        title="Scan receipt with camera"
+        style={{
+          position:'fixed', bottom:24, right:24, zIndex:150,
+          width:58, height:58, borderRadius:'50%',
+          background:'linear-gradient(135deg,#6366f1,#a78bfa)',
+          border:'none', cursor:'pointer', color:'#fff',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          boxShadow:'0 6px 24px rgba(99,102,241,0.5)',
+          transition:'transform 0.15s',
+        }}
+        onMouseDown={e => e.currentTarget.style.transform='scale(0.92)'}
+        onMouseUp={e => e.currentTarget.style.transform='scale(1)'}
+      >
+        {/* Camera SVG icon inline */}
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+      </button>
+    </>
+  )
+}

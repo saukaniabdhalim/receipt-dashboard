@@ -41,7 +41,6 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          # Set this to your GitHub repo name, e.g. /receipt-dashboard/
           VITE_BASE_PATH: /${{ github.event.repository.name }}/
 
       - name: Setup Pages
