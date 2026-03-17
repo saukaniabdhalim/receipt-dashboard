@@ -1,0 +1,24 @@
+# Node / Frontend
+node_modules/
+dist/
+.env
+.env.local
+frontend/.vite/
+frontend/dist/
+
+# .NET Backend
+bin/
+obj/
+*.user
+*.suo
+.vs/
+backend/*.db
+backend/**/*.db
+backend/**/receipts*.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
