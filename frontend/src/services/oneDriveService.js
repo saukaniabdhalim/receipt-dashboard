@@ -1,71 +1,114 @@
 // ─────────────────────────────────────────────────────────────
 // OneDrive Public Folder Service
-// Uses Microsoft Graph API with a public share link — no login required
+// Microsoft Graph API — anonymous access via public share link
 // ─────────────────────────────────────────────────────────────
 
-export const SHARE_URL = "https://1drv.ms/f/c/073e5aa9950c6d8c/IgDw6oxE2PdvS5XrWfXeuOjOAe_H3KvgJg80jItXggTWtqg?e=1sUWha"
+export const SHARE_URL = "https://1drv.ms/f/c/073e5aa9950c6d8c/IgDw6oxE2PdvS5XrWfXeuOjOAe_H3KvgJg80jItXggTWtqg?e=688nJN"
 
+/**
+ * Properly encode a OneDrive share URL to Graph API sharing token
+ * Uses TextEncoder for safe UTF-8 → base64 conversion (handles all chars)
+ */
 function encodeSharingUrl(url) {
-  const base64 = btoa(url).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
-  return `u!${base64}`
+  // Convert string to UTF-8 bytes then to base64
+  const bytes = new TextEncoder().encode(url)
+  let binary = ''
+  bytes.forEach(b => binary += String.fromCharCode(b))
+  const base64 = btoa(binary)
+  // base64url encoding: remove padding, replace + with -, / with _
+  return 'u!' + base64.replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
 }
 
 const SHARING_TOKEN = encodeSharingUrl(SHARE_URL)
-const GRAPH_ROOT    = `https://graph.microsoft.com/v1.0/shares/${SHARING_TOKEN}/driveItem`
+
+// ── Graph API helpers ───────────────────────────────────────
+
+async function graphFetch(url) {
+  const res = await fetch(url, {
+    headers: { Accept: 'application/json' }
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    const msg = body?.error?.message || body?.error?.code || `HTTP ${res.status}`
+    throw new Error(msg)
+  }
+  return res.json()
+}
+
+// ── Root drive item ─────────────────────────────────────────
+
+let _rootMeta = null
+
+async function getRootMeta() {
+  if (_rootMeta) return _rootMeta
+  const data = await graphFetch(
+    `https://graph.microsoft.com/v1.0/shares/${SHARING_TOKEN}/driveItem` +
+    `?$select=id,name,parentReference`
+  )
+  _rootMeta = data
+  return data
+}
+
+// ── List files ──────────────────────────────────────────────
+
+const FIELDS = 'id,name,size,lastModifiedDateTime,folder,webUrl,file,@microsoft.graph.downloadUrl'
 
 /**
- * List files in the shared folder root (or a child folder by id)
+ * List files in the shared folder root, or a subfolder by itemId
  */
 export async function listOneDriveFiles(itemId = null) {
-  const url = itemId
-    ? `https://graph.microsoft.com/v1.0/drives/${await getDriveId()}/items/${itemId}/children?$select=id,name,size,lastModifiedDateTime,folder,webUrl,file,@microsoft.graph.downloadUrl`
-    : `${GRAPH_ROOT}/children?$select=id,name,size,lastModifiedDateTime,folder,webUrl,file,@microsoft.graph.downloadUrl`
+  let url
 
-  const res = await fetch(url)
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err?.error?.message || `Graph API error ${res.status}`)
+  if (itemId) {
+    // Navigate into a subfolder: need driveId from root meta
+    const root = await getRootMeta()
+    const driveId = root.parentReference?.driveId
+    if (!driveId) throw new Error('Could not determine drive ID')
+    url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$select=${FIELDS}`
+  } else {
+    // Root of the shared folder
+    url = `https://graph.microsoft.com/v1.0/shares/${SHARING_TOKEN}/driveItem/children?$select=${FIELDS}`
   }
-  const data = await res.json()
-  return data.value || []
+
+  const data = await graphFetch(url)
+  const items = data.value || []
+
+  // Sort: folders first, then by name
+  items.sort((a, b) => {
+    if (a.folder && !b.folder) return -1
+    if (!a.folder && b.folder) return 1
+    return a.name.localeCompare(b.name)
+  })
+
+  return items
 }
 
-// Cache the driveId so we don't fetch it repeatedly
-let _driveId = null
-export async function getDriveId() {
-  if (_driveId) return _driveId
-  const res = await fetch(`${GRAPH_ROOT}?$select=id,parentReference`)
-  if (!res.ok) throw new Error('Could not get drive ID')
-  const data = await res.json()
-  _driveId = data.parentReference?.driveId
-  return _driveId
-}
+// ── Download URL ─────────────────────────────────────────────
 
 /**
- * Get a temporary download URL for a file (for sending to Claude AI)
- * The @microsoft.graph.downloadUrl in file listing is already a direct URL
+ * Get a direct download URL for a file item
+ * @microsoft.graph.downloadUrl is included in the listing $select above
  */
 export async function getFileDownloadUrl(item) {
-  // First try the field returned directly in listing
+  // Already included in listing response
   if (item['@microsoft.graph.downloadUrl']) {
     return item['@microsoft.graph.downloadUrl']
   }
-  // Fallback: fetch item individually to get download URL
-  const driveId = await getDriveId()
-  const res = await fetch(
+  // Fallback: fetch item individually
+  const root = await getRootMeta()
+  const driveId = root.parentReference?.driveId
+  if (!driveId) throw new Error('Could not determine drive ID')
+  const data = await graphFetch(
     `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${item.id}?$select=@microsoft.graph.downloadUrl,webUrl`
   )
-  if (!res.ok) throw new Error('Could not get download URL')
-  const data = await res.json()
-  return data['@microsoft.graph.downloadUrl'] || data.webUrl
+  return data['@microsoft.graph.downloadUrl'] || null
 }
 
-/**
- * Fetch a file as base64 (for sending image to Claude API)
- */
+// ── Fetch file as base64 ─────────────────────────────────────
+
 export async function fetchFileAsBase64(downloadUrl) {
   const res = await fetch(downloadUrl)
-  if (!res.ok) throw new Error(`Failed to fetch file: ${res.status}`)
+  if (!res.ok) throw new Error(`Download failed: ${res.status}`)
   const blob = await res.blob()
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -75,14 +118,8 @@ export async function fetchFileAsBase64(downloadUrl) {
   })
 }
 
-export function isImageFile(item) {
-  return /\.(jpg|jpeg|png|gif|webp|heic|bmp)$/i.test(item.name || '')
-}
+// ── File type helpers ────────────────────────────────────────
 
-export function isPdfFile(item) {
-  return /\.pdf$/i.test(item.name || '')
-}
-
-export function isReceiptFile(item) {
-  return isImageFile(item) || isPdfFile(item)
-}
+export const isImageFile  = (item) => /\.(jpg|jpeg|png|gif|webp|heic|bmp)$/i.test(item.name || '')
+export const isPdfFile    = (item) => /\.pdf$/i.test(item.name || '')
+export const isReceiptFile = (item) => isImageFile(item) || isPdfFile(item)
