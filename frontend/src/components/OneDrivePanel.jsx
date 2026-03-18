@@ -11,7 +11,7 @@ const MAX_FILES = 20
 const ACCEPTED  = '.jpg,.jpeg,.png,.gif,.webp,.heic,.bmp,.pdf'
 
 // ── Single file card ──────────────────────────────────────────
-function FileCard({ file, state, result, onExtract, onAdd, onRemove, added }) {
+function FileCard({ file, state, result, onExtract, onAdd, onRemove, added, progress }) {
   const isImg = /image\//.test(file.type)
   const isPdf = file.type === 'application/pdf'
   const previewUrl = isImg ? URL.createObjectURL(file) : null
@@ -49,7 +49,8 @@ function FileCard({ file, state, result, onExtract, onAdd, onRemove, added }) {
           )}
           {state==='loading' && (
             <span style={{ fontSize:11, color:'#a78bfa', display:'flex', alignItems:'center', gap:4 }}>
-              <Loader size={12} style={{ animation:'spin 1s linear infinite' }}/> Reading…
+              <Loader size={12} style={{ animation:'spin 1s linear infinite' }}/>
+              {progress > 0 ? `OCR ${progress}%…` : 'Reading…'}
             </span>
           )}
           {state==='done' && !result?.error && !added && (
@@ -76,6 +77,16 @@ function FileCard({ file, state, result, onExtract, onAdd, onRemove, added }) {
         <div style={{ borderTop:'1px solid #22c55e20', padding:'10px 12px' }}>
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
             <span style={{ fontSize:11, color:'#22c55e', fontWeight:700 }}>✅ AI Extracted</span>
+            {result.source === 'ocr' && (
+              <span style={{ fontSize:9, padding:'2px 6px', borderRadius:4, background:'#3b82f620', color:'#3b82f6', fontWeight:700, marginLeft:4 }}>
+                FREE OCR
+              </span>
+            )}
+            {result._fallbackReason && (
+              <span style={{ fontSize:9, color:'#f5a623', marginLeft:4 }} title={`Claude unavailable: ${result._fallbackReason}`}>
+                ⚡ fallback
+              </span>
+            )}
             <span style={{
               fontSize:9, padding:'2px 6px', borderRadius:8, fontWeight:700, letterSpacing:'0.05em',
               background:`${confColor[result.confidence]||'#6b82a8'}20`,
@@ -126,6 +137,7 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
   const [states,     setStates]     = useState({})
   const [results,    setResults]    = useState({})
   const [addedSet,   setAddedSet]   = useState(new Set())
+  const [progress,   setProgress]   = useState({})
   const [dragOver,   setDragOver]   = useState(false)
 
   const fileInputRef   = useRef()   // gallery / file picker
@@ -163,10 +175,15 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
   const handleExtract = async (file) => {
     const key = fileKey(file)
     setStates(s => ({ ...s, [key]: 'loading' }))
+    setProgress(s => ({ ...s, [key]: 0 }))
     try {
       const base64   = await readFileAsBase64(file)
       const mimeType = file.type || getMimeType(file.name) || 'image/jpeg'
-      const result   = await extractReceiptData(base64, mimeType, file.name)
+      const result   = await extractReceiptData(
+        base64, mimeType, file.name,
+        file,  // pass file for OCR fallback
+        (pct) => setProgress(s => ({ ...s, [key]: pct }))
+      )
       setResults(s => ({ ...s, [key]: result }))
       setStates( s => ({ ...s, [key]: 'done' }))
     } catch (e) {
@@ -345,6 +362,7 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
                   state={states[key] || 'idle'}
                   result={results[key]}
                   added={addedSet.has(key)}
+                  progress={progress[key] || 0}
                   onExtract={() => handleExtract(file)}
                   onAdd={() => handleAdd(file)}
                   onRemove={() => removeFile(file)}

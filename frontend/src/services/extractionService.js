@@ -1,6 +1,10 @@
 // ─────────────────────────────────────────────────────────────
-// AI Receipt Extraction via Cloudflare Worker proxy
+// AI Receipt Extraction
+// Primary:  Claude AI via Cloudflare Worker (best accuracy)
+// Fallback: Tesseract.js free OCR (no API key, runs in browser)
 // ─────────────────────────────────────────────────────────────
+
+import { extractTextFromImage, parseReceiptText } from './ocrService.js'
 
 const PROXY_URL = 'https://spring-art-d63a.saukanihalim.workers.dev/'
 
@@ -33,7 +37,21 @@ Rules:
 - Use null for any field you cannot determine.
 - Return ONLY the JSON. Nothing else before or after it.`
 
-export async function extractReceiptData(base64Data, mimeType, filename = '') {
+// ── Determine if an error is due to low balance ──────────────
+function isBalanceError(msg = '') {
+  const m = msg.toLowerCase()
+  return m.includes('credit balance') ||
+         m.includes('insufficient') ||
+         m.includes('billing') ||
+         m.includes('quota') ||
+         m.includes('rate limit') ||
+         m.includes('overloaded') ||
+         m.includes('529') ||
+         m.includes('402')
+}
+
+// ── Primary: Claude AI via Cloudflare Worker ─────────────────
+async function extractWithClaude(base64Data, mimeType, filename) {
   let response
 
   try {
@@ -47,102 +65,116 @@ export async function extractReceiptData(base64Data, mimeType, filename = '') {
         messages: [{
           role: 'user',
           content: [
-            {
-              type: 'image',
-              source: { type: 'base64', media_type: mimeType, data: base64Data }
-            },
-            {
-              type: 'text',
-              text: 'Extract the receipt data and return ONLY the JSON object. No other text.'
-            }
+            { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64Data } },
+            { type: 'text', text: 'Extract the receipt data and return ONLY the JSON object. No other text.' }
           ]
         }]
       })
     })
   } catch (networkErr) {
-    throw new Error(`Cannot reach AI proxy — check your internet connection (${networkErr.message})`)
+    throw new Error(`network:${networkErr.message}`)
   }
 
-  // Get raw text first for debugging
   const rawText = await response.text()
-  console.log('[Receipt AI] HTTP status:', response.status)
-  console.log('[Receipt AI] Raw response:', rawText)
+  console.log('[Claude] status:', response.status, '| raw:', rawText.slice(0, 200))
 
   if (!response.ok) {
-    let errMsg = `Proxy error ${response.status}`
+    let errMsg = `status_${response.status}`
     try {
-      const errJson = JSON.parse(rawText)
-      errMsg = errJson?.error?.message || errJson?.message || errMsg
+      const e = JSON.parse(rawText)
+      errMsg = e?.error?.message || e?.message || errMsg
     } catch {}
     throw new Error(errMsg)
   }
 
-  // Parse the Anthropic API response envelope
   let envelope
-  try {
-    envelope = JSON.parse(rawText)
-  } catch {
-    throw new Error(`Invalid response from proxy: ${rawText.slice(0, 100)}`)
-  }
+  try { envelope = JSON.parse(rawText) }
+  catch { throw new Error(`Invalid proxy response: ${rawText.slice(0,100)}`) }
 
-  // Check for API-level errors inside the envelope
   if (envelope.type === 'error' || envelope.error) {
-    const msg = envelope.error?.message || envelope.error || 'Claude API error'
-    throw new Error(msg)
+    throw new Error(envelope.error?.message || String(envelope.error))
   }
 
-  // Extract the text content
   const aiText = (envelope.content?.[0]?.text || '').trim()
-  console.log('[Receipt AI] AI text:', aiText)
+  if (!aiText) throw new Error('Empty AI response')
 
-  if (!aiText) {
-    throw new Error('Empty response from AI — please try again')
-  }
-
-  // Strip markdown fences if present (just in case)
-  const cleaned = aiText
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim()
-
-  // Find JSON object in the response (in case there's any surrounding text)
+  const cleaned   = aiText.replace(/^```json\s*/i,'').replace(/^```\s*/i,'').replace(/\s*```$/i,'').trim()
   const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) {
-    throw new Error(`AI did not return valid JSON. Got: "${cleaned.slice(0, 80)}"`)
-  }
+  if (!jsonMatch) throw new Error(`No JSON found in: "${cleaned.slice(0,80)}"`)
 
-  let parsed
-  try {
-    parsed = JSON.parse(jsonMatch[0])
-  } catch (parseErr) {
-    throw new Error(`Could not parse AI response as JSON: ${parseErr.message}`)
-  }
-
+  const p = JSON.parse(jsonMatch[0])
   return {
-    merchant:    parsed.merchant    || '',
-    date:        validateDate(parsed.date),
-    amount:      parseFloat(parsed.amount) || 0,
-    currency:    parsed.currency    || 'MYR',
-    category:    CATEGORIES.includes(parsed.category) ? parsed.category : 'others',
-    description: parsed.description || '',
-    confidence:  parsed.confidence  || 'medium',
+    merchant:    p.merchant    || '',
+    date:        validateDate(p.date),
+    amount:      parseFloat(p.amount) || 0,
+    currency:    p.currency    || 'MYR',
+    category:    CATEGORIES.includes(p.category) ? p.category : 'others',
+    description: p.description || '',
+    confidence:  p.confidence  || 'medium',
+    source:      'claude',
   }
 }
 
+// ── Fallback: Free Tesseract OCR ─────────────────────────────
+async function extractWithOCR(file, onProgress) {
+  const rawText = await extractTextFromImage(file, onProgress)
+  console.log('[Tesseract] raw text:', rawText.slice(0, 300))
+  const result  = parseReceiptText(rawText)
+  return { ...result, source: 'ocr' }
+}
+
+// ── Main export: tries Claude, falls back to OCR ─────────────
+export async function extractReceiptData(base64Data, mimeType, filename = '', file = null, onProgress = null) {
+  // ── Try Claude first ──
+  try {
+    const result = await extractWithClaude(base64Data, mimeType, filename)
+    console.log('[Extraction] ✓ Claude succeeded')
+    return result
+  } catch (claudeErr) {
+    const msg = claudeErr.message || ''
+    console.warn('[Extraction] Claude failed:', msg)
+
+    const shouldFallback =
+      isBalanceError(msg)      ||   // low credits
+      msg.startsWith('network')  ||   // offline / CORS
+      msg.includes('502')        ||   // worker down
+      msg.includes('503')        ||   // overloaded
+      msg.includes('Empty AI')   ||   // empty response
+      msg.includes('No JSON')         // parse failure
+
+    if (!shouldFallback) {
+      // Hard error (bad key, wrong config) — surface it directly
+      throw claudeErr
+    }
+
+    // ── Fallback to free OCR ──
+    if (!file) {
+      throw new Error(`AI unavailable (${msg.slice(0,60)}). Provide the file object for OCR fallback.`)
+    }
+
+    console.log('[Extraction] Falling back to Tesseract OCR…')
+    try {
+      const ocrResult = await extractWithOCR(file, onProgress)
+      ocrResult._fallbackReason = msg   // so UI can show "used OCR"
+      return ocrResult
+    } catch (ocrErr) {
+      throw new Error(`Both AI and OCR failed.\nAI: ${msg.slice(0,80)}\nOCR: ${ocrErr.message}`)
+    }
+  }
+}
+
+// ── Helpers ───────────────────────────────────────────────────
 function validateDate(str) {
   if (!str) return new Date().toISOString().split('T')[0]
   const m = str.match(/(\d{4})-(\d{2})-(\d{2})/)
-  return m ? str.slice(0, 10) : new Date().toISOString().split('T')[0]
+  return m ? str.slice(0,10) : new Date().toISOString().split('T')[0]
 }
 
 export function getMimeType(filename) {
-  const ext = (filename || '').split('.').pop().toLowerCase()
-  return {
-    jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png',
-    gif:'image/gif',  webp:'image/webp', heic:'image/heic',
-    bmp:'image/bmp',  pdf:'application/pdf'
-  }[ext] || 'image/jpeg'
+  const ext = (filename||'').split('.').pop().toLowerCase()
+  return { jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',
+           gif:'image/gif',webp:'image/webp',heic:'image/heic',
+           bmp:'image/bmp',pdf:'application/pdf' }[ext] || 'image/jpeg'
 }
 
 export function readFileAsBase64(file) {
