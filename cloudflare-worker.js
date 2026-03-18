@@ -74,6 +74,13 @@ async function handleClaude(request, env) {
   if (!env.ANTHROPIC_API_KEY) {
     return json({ error: { message: 'ANTHROPIC_API_KEY not set in Worker secrets' } }, 500)
   }
+
+  // Check content-length if available
+  const contentLength = parseInt(request.headers.get('content-length') || '0')
+  if (contentLength > 2 * 1024 * 1024) {  // 2MB limit
+    return json({ error: { message: `Request too large (${Math.round(contentLength/1024)}KB). Image must be under 2MB.` } }, 413)
+  }
+
   let body
   try { body = await request.json() }
   catch { return json({ error: { message: 'Invalid JSON' } }, 400) }
