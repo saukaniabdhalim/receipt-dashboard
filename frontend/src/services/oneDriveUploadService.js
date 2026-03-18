@@ -1,44 +1,39 @@
 // ─────────────────────────────────────────────────────────────
 // OneDrive Upload Service
-// Uploads receipt images to /receipts folder in the user's OneDrive
-// Uses MSAL (loaded from CDN) for Microsoft login — no backend needed
+// Uses @azure/msal-browser (npm) — no CDN loading, fully bundled
+// Uploads receipt images to /receipts folder in personal OneDrive
 // ─────────────────────────────────────────────────────────────
 
-const UPLOAD_FOLDER  = 'receipts'   // folder name in OneDrive root
-const SETTINGS_KEY   = 'resit_od_upload_settings'
-const GRAPH_BASE     = 'https://graph.microsoft.com/v1.0'
+import { PublicClientApplication } from '@azure/msal-browser'
 
-// ── Load MSAL from CDN ────────────────────────────────────────
-let msalApp = null
+const UPLOAD_FOLDER = 'receipts'
+const GRAPH_BASE    = 'https://graph.microsoft.com/v1.0'
+const SETTINGS_KEY  = 'resit_od_upload_settings'
+const SCOPES        = ['Files.ReadWrite', 'User.Read']
 
-async function getMsal() {
-  if (msalApp) return msalApp
+// ── MSAL instance cache ───────────────────────────────────────
+let _msalApp   = null
+let _clientId  = null
 
-  // Load MSAL if not already loaded
-  if (!window.msal) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement('script')
-      s.src = 'https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js'
-      s.onload  = resolve
-      s.onerror = () => reject(new Error('Failed to load MSAL'))
-      document.head.appendChild(s)
-    })
-  }
+async function getMsalApp(clientId) {
+  // Re-create if clientId changed
+  if (_msalApp && _clientId === clientId) return _msalApp
 
-  const clientId = getClientId()
-  if (!clientId) throw new Error('NO_CLIENT_ID')
+  _msalApp  = null
+  _clientId = clientId
 
-  msalApp = new window.msal.PublicClientApplication({
+  const app = new PublicClientApplication({
     auth: {
       clientId,
-      authority: 'https://login.microsoftonline.com/consumers',
+      authority:   'https://login.microsoftonline.com/consumers',
       redirectUri: window.location.origin + window.location.pathname,
     },
-    cache: { cacheLocation: 'localStorage' }
+    cache: { cacheLocation: 'localStorage', storeAuthStateInCookie: false }
   })
 
-  await msalApp.initialize()
-  return msalApp
+  await app.initialize()
+  _msalApp = app
+  return app
 }
 
 // ── Settings helpers ──────────────────────────────────────────
@@ -46,49 +41,69 @@ export function getClientId() {
   try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}').clientId || '' }
   catch { return '' }
 }
-export function saveClientId(id) {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify({ clientId: id }))
-  msalApp = null // reset so next call re-initialises with new client ID
-}
-export function isUploadConfigured() { return !!getClientId() }
 
-// ── Get access token (login popup if needed) ──────────────────
-async function getAccessToken() {
-  const app      = await getMsal()
+export function saveClientId(id) {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify({ clientId: id.trim() }))
+  _msalApp  = null  // force re-init with new ID
+  _clientId = null
+}
+
+export function isUploadConfigured() {
+  return !!getClientId()
+}
+
+export async function signOutOneDrive() {
+  const cid = getClientId()
+  if (!cid) return
+  try {
+    const app      = await getMsalApp(cid)
+    const accounts = app.getAllAccounts()
+    if (accounts.length > 0) {
+      await app.logoutPopup({ account: accounts[0] })
+    }
+  } catch (e) {
+    console.warn('Sign out error:', e)
+  }
+}
+
+// ── Get access token ──────────────────────────────────────────
+async function getToken() {
+  const clientId = getClientId()
+  if (!clientId) throw new Error('Azure Client ID not configured — open Setup OneDrive Upload in the app')
+
+  const app      = await getMsalApp(clientId)
   const accounts = app.getAllAccounts()
-  const request  = { scopes: ['Files.ReadWrite', 'Files.ReadWrite.All'] }
+  const request  = { scopes: SCOPES }
 
   if (accounts.length > 0) {
     try {
       const result = await app.acquireTokenSilent({ ...request, account: accounts[0] })
       return result.accessToken
-    } catch {}
+    } catch {
+      // Silent failed — fall through to popup
+    }
   }
 
-  // Popup login
+  // Login popup
   const result = await app.loginPopup(request)
   return result.accessToken
 }
 
-// ── Upload file to OneDrive /receipts ─────────────────────────
-/**
- * @param {File}   file        - original File object
- * @param {string} base64Data  - base64 encoded content
- * @param {string} mimeType
- * @returns {object} { webUrl, name }
- */
+// ── Upload file to OneDrive /receipts folder ──────────────────
 export async function uploadToOneDrive(file, base64Data, mimeType) {
-  const token    = await getAccessToken()
-  const filename = `${new Date().toISOString().slice(0,10)}_${file.name.replace(/[^a-zA-Z0-9._-]/g,'_')}`
+  const token    = await getToken()
+  const datePart = new Date().toISOString().slice(0, 10)
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+  const filename = `${datePart}_${safeName}`
   const endpoint = `${GRAPH_BASE}/me/drive/root:/${UPLOAD_FOLDER}/${filename}:/content`
 
-  // Convert base64 → binary
-  const binaryStr = atob(base64Data)
-  const bytes     = new Uint8Array(binaryStr.length)
-  for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
+  // base64 → Uint8Array
+  const binary = atob(base64Data)
+  const bytes  = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
 
   const response = await fetch(endpoint, {
-    method: 'PUT',
+    method:  'PUT',
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type':  mimeType,
@@ -103,13 +118,4 @@ export async function uploadToOneDrive(file, base64Data, mimeType) {
 
   const data = await response.json()
   return { webUrl: data.webUrl, name: data.name, id: data.id }
-}
-
-// ── Sign out ──────────────────────────────────────────────────
-export async function signOutOneDrive() {
-  try {
-    const app      = await getMsal()
-    const accounts = app.getAllAccounts()
-    if (accounts.length > 0) await app.logoutPopup({ account: accounts[0] })
-  } catch {}
 }

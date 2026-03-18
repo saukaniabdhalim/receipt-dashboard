@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@azure/msal-browser": "^5.5.0",
     "chart.js": "^4.4.3",
     "date-fns": "^3.6.0",
     "lucide-react": "^0.383.0",
