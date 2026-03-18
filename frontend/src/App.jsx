@@ -13,6 +13,16 @@ import {
 import { SHARE_URL } from './services/oneDriveService.js'
 import { loadFromGist, saveToGist } from './services/gistStorage.js'
 
+// ── Local date helpers ───────────────────────────────────────
+function localYearMonth() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`
+}
+function localDateStr() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+}
+
 // ── Categories ───────────────────────────────────────────────
 export const CATEGORIES = [
   { id:'food',          label:'Food & Dining',    color:'#f97316', emoji:'🍜' },
@@ -181,7 +191,7 @@ export default function App() {
 
   // ── Computed ─────────────────────────────────────────────────
   const totalThisMonth = receipts
-    .filter(r => r.date?.startsWith(new Date().toISOString().slice(0,7)))
+    .filter(r => r.date?.startsWith(localYearMonth()))
     .reduce((s,r) => s+Number(r.amount), 0)
 
   const navItems = [
@@ -246,7 +256,7 @@ export default function App() {
           <div style={{ fontSize:10, color:'var(--text-muted)', marginBottom:3 }}>This Month</div>
           <div style={{ fontSize:19, fontWeight:700, color:'var(--accent)', fontFamily:'JetBrains Mono' }}>RM {totalThisMonth.toFixed(2)}</div>
           <div style={{ fontSize:10, color:'var(--text-dim)', marginTop:1 }}>
-            {receipts.filter(r=>r.date?.startsWith(new Date().toISOString().slice(0,7))).length} transactions
+            {receipts.filter(r=>r.date?.startsWith(localYearMonth())).length} transactions
           </div>
         </div>
 
@@ -375,9 +385,19 @@ export default function App() {
                 cameraFile={cameraFile}
                 onCameraFileConsumed={() => setCameraFile(null)}
                 onExtracted={data => {
-                  setEditItem({ ...data, id:undefined })
+                  // Pre-fill modal with all extracted fields
+                  setEditItem({
+                    id:          undefined,
+                    date:        data.date        || localDateStr(),
+                    merchant:    data.merchant    || '',
+                    amount:      data.amount      || '',
+                    category:    data.category    || 'others',
+                    description: data.description || '',
+                    currency:    data.currency    || 'MYR',
+                    imageNote:   data.imageNote   || '',
+                  })
                   setShowModal(true)
-                  showToast('Receipt extracted — review and save ✓')
+                  showToast('✅ Receipt extracted — review & save')
                 }}/>
             </div>
           )}

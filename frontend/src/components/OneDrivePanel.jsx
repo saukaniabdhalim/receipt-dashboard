@@ -1,12 +1,11 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { extractReceiptData, getMimeType, readFileAsBase64 } from '../services/extractionService.js'
 import { sendReceiptToTelegram }   from '../services/telegramService.js'
-import { uploadToOneDrive, isUploadConfigured, getClientId, saveClientId } from '../services/oneDriveUploadService.js'
-import { SHARE_URL } from '../services/oneDriveService.js'
+import { uploadToOneDrive }        from '../services/oneDriveUploadService.js'
+import { SHARE_URL }               from '../services/oneDriveService.js'
 import {
-  Upload, Image, FileText, Sparkles, CheckCircle,
-  AlertTriangle, Loader, ExternalLink, X, RefreshCw,
-  Camera, Send, Cloud, Settings, Eye, EyeOff
+  Image, FileText, Sparkles, CheckCircle,
+  Loader, ExternalLink, X, RefreshCw, Camera, Send, Cloud
 } from 'lucide-react'
 
 const confColor = { high:'#22c55e', medium:'#f5a623', low:'#ef4444' }
@@ -14,60 +13,10 @@ const MAX_FILES = 20
 const ACCEPTED  = '.jpg,.jpeg,.png,.gif,.webp,.heic,.bmp,.pdf'
 const fileKey   = f => f.name + f.size
 
-// ── Config panel for Azure Client ID ─────────────────────────
-function UploadConfigPanel({ onSaved }) {
-  const [val, setVal]       = useState(getClientId)
-  const [show, setShow]     = useState(false)
-  const [saved, setSaved]   = useState(false)
-
-  const handleSave = () => {
-    saveClientId(val.trim())
-    setSaved(true)
-    setTimeout(() => { setSaved(false); onSaved?.() }, 1500)
-  }
-
-  return (
-    <div style={{ padding:'14px', background:'var(--bg-input)', borderRadius:10, border:'1px solid var(--border)' }}>
-      <div style={{ fontSize:12, fontWeight:700, color:'var(--text-primary)', marginBottom:6 }}>
-        ⚙️ OneDrive Upload Setup
-      </div>
-      <div style={{ fontSize:11, color:'var(--text-muted)', marginBottom:10, lineHeight:1.6 }}>
-        To upload receipts directly to OneDrive you need a free Azure App ID.{' '}
-        <a href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/CreateApplicationBlade"
-          target="_blank" rel="noopener noreferrer" style={{ color:'#3b82f6' }}>
-          Create one here →
-        </a>
-        <br/>
-        Register type: <strong style={{color:'var(--text-primary)'}}>Single-page application</strong> ·
-        Redirect URI: <code style={{background:'var(--bg-primary)',padding:'1px 4px',borderRadius:3,fontSize:10}}>{window.location.origin + window.location.pathname}</code>
-      </div>
-      <div style={{ display:'flex', gap:8 }}>
-        <div style={{ position:'relative', flex:1 }}>
-          <input
-            type={show ? 'text' : 'password'}
-            value={val}
-            onChange={e => setVal(e.target.value)}
-            placeholder="Paste Azure Application (client) ID…"
-            style={{ ...inputStyle, width:'100%', paddingRight:34, fontFamily:'JetBrains Mono', fontSize:11 }}
-          />
-          <button onClick={() => setShow(v=>!v)}
-            style={{ position:'absolute', right:8, top:'50%', transform:'translateY(-50%)', background:'none', border:'none', color:'var(--text-muted)', cursor:'pointer' }}>
-            {show ? <EyeOff size={13}/> : <Eye size={13}/>}
-          </button>
-        </div>
-        <button onClick={handleSave}
-          style={{ ...actionBtn('#22c55e'), padding:'7px 14px', flexShrink:0 }}>
-          {saved ? '✓ Saved' : 'Save'}
-        </button>
-      </div>
-    </div>
-  )
-}
-
-// ── Single file card ──────────────────────────────────────────
-function FileCard({ file, state, result, onExtract, onAdd, onRemove, added, progress,
-                    onUploadOneDrive, onSendTelegram, uploadState, telegramState,
-                    onSaveAll, saveAllState, saveAllLog }) {
+// ── File card ─────────────────────────────────────────────────
+function FileCard({ file, state, result, onExtract, onRemove, progress,
+                    onSaveAll, saveAllState, saveAllLog,
+                    onUploadOneDrive, onSendTelegram, uploadState, telegramState }) {
   const isImg      = /image\//.test(file.type)
   const previewUrl = isImg ? URL.createObjectURL(file) : null
 
@@ -76,7 +25,6 @@ function FileCard({ file, state, result, onExtract, onAdd, onRemove, added, prog
       border:`1px solid ${state==='done'&&!result?.error?'#22c55e30':state==='error'?'#ef444430':'var(--border)'}`,
       borderRadius:10, overflow:'hidden',
       background: state==='done'&&!result?.error ? '#0a1a0f' : 'var(--bg-card)',
-      transition:'all 0.2s',
     }}>
       {/* Top row */}
       <div style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px' }}>
@@ -88,10 +36,10 @@ function FileCard({ file, state, result, onExtract, onAdd, onRemove, added, prog
         }
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ fontSize:13, color:'var(--text-primary)', fontWeight:500 }} className="truncate">{file.name}</div>
-          <div style={{ fontSize:11, color:'var(--text-dim)', marginTop:1 }}>{(file.size/1024).toFixed(0)} KB</div>
+          <div style={{ fontSize:11, color:'var(--text-dim)' }}>{(file.size/1024).toFixed(0)} KB</div>
         </div>
-        <div style={{ flexShrink:0, display:'flex', alignItems:'center', gap:6 }}>
-          {state==='idle' && !added && (
+        <div style={{ display:'flex', alignItems:'center', gap:6, flexShrink:0 }}>
+          {state==='idle' && (
             <button onClick={onExtract} style={aiBtn}>
               <Sparkles size={11}/> Extract
             </button>
@@ -102,153 +50,110 @@ function FileCard({ file, state, result, onExtract, onAdd, onRemove, added, prog
               {progress > 0 ? `OCR ${progress}%…` : 'Scanning…'}
             </span>
           )}
-          {state==='done' && !result?.error && !added && (
+          {state==='done' && !result?.error && (
             <span style={{ fontSize:11, color:'#22c55e', display:'flex', gap:4, alignItems:'center' }}>
               <CheckCircle size={12}/> Done
             </span>
           )}
-          {added && <span style={{ fontSize:11, color:'var(--text-dim)' }}>✅ Added</span>}
           {state==='error' && (
             <button onClick={onExtract} style={{ ...aiBtn, borderColor:'#ef444450', color:'#ef4444', background:'#ef444410' }}>
               <RefreshCw size={11}/> Retry
             </button>
           )}
-          {!added && (
-            <button onClick={onRemove} style={{ background:'none', border:'none', color:'var(--text-dim)', cursor:'pointer', padding:2 }}>
-              <X size={14}/>
-            </button>
-          )}
+          <button onClick={onRemove} style={{ background:'none', border:'none', color:'var(--text-dim)', cursor:'pointer', padding:2 }}>
+            <X size={14}/>
+          </button>
         </div>
       </div>
 
       {/* Extracted result */}
-      {state==='done' && result && !result.error && !added && (
+      {state==='done' && result && !result.error && (
         <div style={{ borderTop:'1px solid #22c55e20', padding:'10px 12px' }}>
           {/* Source badge */}
           <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8 }}>
             <span style={{ fontSize:11, color:'#22c55e', fontWeight:700 }}>✅ Extracted</span>
-            {result.source === 'ocr'
+            {result.source==='ocr'
               ? <span style={badge('#3b82f6')}>FREE OCR</span>
               : <span style={badge('#a78bfa')}>Claude AI</span>
             }
-            {result._fallbackReason && (
-              <span style={{ fontSize:9, color:'#f5a623' }} title={result._fallbackReason}>⚡ fallback</span>
-            )}
+            <span style={{ ...badge(confColor[result.confidence]||'#6b82a8') }}>
+              {(result.confidence||'medium').toUpperCase()}
+            </span>
           </div>
 
-          {/* Data grid */}
+          {/* Data preview */}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'4px 12px', marginBottom:10 }}>
             {[
               ['Merchant', result.merchant],
-              ['Amount',   result.amount != null ? `RM ${Number(result.amount).toFixed(2)}` : null],
+              ['Amount',   result.amount ? `RM ${Number(result.amount).toFixed(2)}` : null],
               ['Date',     result.date],
               ['Category', result.category],
             ].filter(([,v])=>v).map(([k,v])=>(
               <div key={k}>
-                <div style={{ fontSize:9, color:'var(--text-dim)', textTransform:'uppercase', letterSpacing:'0.05em' }}>{k}</div>
+                <div style={{ fontSize:9, color:'var(--text-dim)', textTransform:'uppercase' }}>{k}</div>
                 <div style={{ fontSize:12, color:'var(--text-primary)', fontWeight:600 }}>{v}</div>
               </div>
             ))}
-            {result.description && (
-              <div style={{ gridColumn:'span 2', marginTop:2 }}>
-                <div style={{ fontSize:9, color:'var(--text-dim)', textTransform:'uppercase' }}>Description</div>
-                <div style={{ fontSize:11, color:'var(--text-muted)' }}>{result.description}</div>
-              </div>
-            )}
           </div>
 
-          {/* Action buttons */}
-          <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
-
-            {/* ── Save Receipt (all-in-one) ── */}
-            <button onClick={onSaveAll}
-              disabled={saveAllState==='loading'||saveAllState==='done'}
-              style={{
-                width:'100%', padding:'10px',
-                background: saveAllState==='done'
-                  ? 'linear-gradient(135deg,#22c55e,#16a34a)'
-                  : 'linear-gradient(135deg,#f5a623,#f97316)',
-                color:'#000', border:'none', borderRadius:9, cursor:'pointer',
-                fontFamily:'Sora', fontWeight:800, fontSize:14,
-                display:'flex', alignItems:'center', justifyContent:'center', gap:8,
-                boxShadow: saveAllState==='done' ? 'none' : '0 4px 16px rgba(245,166,35,0.35)',
-                opacity: saveAllState==='loading' ? 0.8 : 1,
-                transition:'all 0.2s',
-              }}>
-              {saveAllState==='loading'
-                ? <><Loader size={14} style={{animation:'spin 1s linear infinite'}}/> Saving…</>
-                : saveAllState==='done'
-                ? <>✅ Saved!</>
-                : <>💾 Save Receipt</>
-              }
-            </button>
-
-            {/* Save Receipt log — shows per-action status */}
-            {saveAllLog && saveAllLog.length > 0 && (
-              <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
-                {saveAllLog.map((entry, i) => (
-                  <div key={i} style={{
-                    display:'flex', alignItems:'center', gap:6, fontSize:11,
-                    color: entry.ok ? '#22c55e' : '#f5a623',
-                    padding:'3px 6px', borderRadius:5,
-                    background: entry.ok ? '#22c55e0a' : '#f5a6230a',
-                  }}>
-                    {entry.ok ? '✓' : '⚠'} {entry.label}
-                    {!entry.ok && entry.error && (
-                      <span style={{color:'var(--text-dim)', fontSize:10}} title={entry.error}>
-                        — {entry.error.slice(0,40)}{entry.error.length>40?'…':''}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div style={{ height:1, background:'var(--border)', margin:'2px 0' }}/>
-
-            {/* Add to dashboard */}
-            <button onClick={onAdd} style={{
-              width:'100%', padding:'9px', background:'var(--accent)', color:'#000',
-              border:'none', borderRadius:8, cursor:'pointer', fontFamily:'Sora', fontWeight:700, fontSize:13,
+          {/* ── Save Receipt (all-in-one) ── */}
+          <button onClick={onSaveAll}
+            disabled={saveAllState==='loading'||saveAllState==='done'}
+            style={{
+              width:'100%', padding:'10px', marginBottom:6,
+              background: saveAllState==='done'
+                ? 'linear-gradient(135deg,#22c55e,#16a34a)'
+                : 'linear-gradient(135deg,#f5a623,#f97316)',
+              color:'#000', border:'none', borderRadius:9, cursor: saveAllState==='done'?'default':'pointer',
+              fontFamily:'Sora', fontWeight:800, fontSize:14,
+              display:'flex', alignItems:'center', justifyContent:'center', gap:8,
+              boxShadow: saveAllState==='done'?'none':'0 4px 16px rgba(245,166,35,0.35)',
+              opacity: saveAllState==='loading' ? 0.8 : 1,
             }}>
-              ➕ Add to Dashboard
-            </button>
+            {saveAllState==='loading'
+              ? <><Loader size={14} style={{animation:'spin 1s linear infinite'}}/> Saving…</>
+              : saveAllState==='done'
+              ? <>✅ Saved!</>
+              : <>💾 Save Receipt</>
+            }
+          </button>
 
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
-              {/* Upload to OneDrive */}
-              <button onClick={onUploadOneDrive} disabled={uploadState==='loading'||uploadState==='done'}
-                style={{
-                  ...actionBtn('#0078d4'),
-                  justifyContent:'center', padding:'8px',
-                  opacity: uploadState==='done' ? 0.6 : 1,
+          {/* Save log */}
+          {saveAllLog && saveAllLog.length > 0 && (
+            <div style={{ display:'flex', flexDirection:'column', gap:2, marginBottom:6 }}>
+              {saveAllLog.map((entry, i) => (
+                <div key={i} style={{
+                  fontSize:11, display:'flex', alignItems:'center', gap:5,
+                  color: entry.ok ? '#22c55e' : '#f5a623',
+                  padding:'2px 4px',
                 }}>
-                {uploadState==='loading'
-                  ? <><Loader size={12} style={{animation:'spin 1s linear infinite'}}/> Uploading…</>
-                  : uploadState==='done'
-                  ? <><CheckCircle size={12}/> Saved to OneDrive</>
-                  : uploadState==='error'
-                  ? <><RefreshCw size={12}/> Retry OneDrive</>
-                  : <><Cloud size={12}/> Save to OneDrive</>
-                }
-              </button>
-
-              {/* Send to Telegram */}
-              <button onClick={onSendTelegram} disabled={telegramState==='loading'||telegramState==='done'}
-                style={{
-                  ...actionBtn('#229ed9'),
-                  justifyContent:'center', padding:'8px',
-                  opacity: telegramState==='done' ? 0.6 : 1,
-                }}>
-                {telegramState==='loading'
-                  ? <><Loader size={12} style={{animation:'spin 1s linear infinite'}}/> Sending…</>
-                  : telegramState==='done'
-                  ? <><CheckCircle size={12}/> Sent to Telegram</>
-                  : telegramState==='error'
-                  ? <><RefreshCw size={12}/> Retry Telegram</>
-                  : <><Send size={12}/> Send to Telegram</>
-                }
-              </button>
+                  {entry.ok ? '✓' : '⚠'} {entry.label}
+                  {!entry.ok && entry.error && (
+                    <span style={{ color:'var(--text-dim)', fontSize:10 }} title={entry.error}>
+                      — {String(entry.error).slice(0,40)}
+                    </span>
+                  )}
+                </div>
+              ))}
             </div>
+          )}
+
+          <div style={{ height:1, background:'var(--border)', margin:'4px 0 8px' }}/>
+
+          {/* Individual buttons */}
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
+            <button onClick={onUploadOneDrive} disabled={uploadState==='loading'||uploadState==='done'}
+              style={{ ...actionBtn('#0078d4'), justifyContent:'center', padding:'7px', opacity:uploadState==='done'?0.6:1 }}>
+              {uploadState==='loading' ? <><Loader size={11} style={{animation:'spin 1s linear infinite'}}/> Uploading…</>
+               : uploadState==='done'  ? <><CheckCircle size={11}/> Saved</>
+               : <><Cloud size={11}/> OneDrive</>}
+            </button>
+            <button onClick={onSendTelegram} disabled={telegramState==='loading'||telegramState==='done'}
+              style={{ ...actionBtn('#229ed9'), justifyContent:'center', padding:'7px', opacity:telegramState==='done'?0.6:1 }}>
+              {telegramState==='loading' ? <><Loader size={11} style={{animation:'spin 1s linear infinite'}}/> Sending…</>
+               : telegramState==='done'  ? <><CheckCircle size={11}/> Sent</>
+               : <><Send size={11}/> Telegram</>}
+            </button>
           </div>
         </div>
       )}
@@ -256,7 +161,7 @@ function FileCard({ file, state, result, onExtract, onAdd, onRemove, added, prog
       {/* Error */}
       {state==='error' && result?.error && (
         <div style={{ borderTop:'1px solid #ef444420', padding:'8px 12px', fontSize:11, color:'#ef4444' }}>
-          ⚠️ {result.error}
+          ⚠️ {String(result.error)}
         </div>
       )}
     </div>
@@ -271,19 +176,15 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
   const [addedSet,       setAddedSet]       = useState(new Set())
   const [progress,       setProgress]       = useState({})
   const [dragOver,       setDragOver]       = useState(false)
-  const [uploadStates,   setUploadStates]   = useState({}) // key → idle/loading/done/error
+  const [uploadStates,   setUploadStates]   = useState({})
   const [telegramStates, setTelegramStates] = useState({})
-  const [actionErrors,   setActionErrors]   = useState({}) // key → error message
-  const [saveAllStates,  setSaveAllStates]  = useState({}) // key → idle/loading/done
-  const [saveAllLogs,    setSaveAllLogs]    = useState({}) // key → [{label, ok, error}]
-  const [showODConfig,   setShowODConfig]   = useState(!isUploadConfigured())
+  const [saveAllStates,  setSaveAllStates]  = useState({})
+  const [saveAllLogs,    setSaveAllLogs]    = useState({})
 
   const fileInputRef   = useRef()
   const cameraInputRef = useRef()
+  const base64Cache    = useRef({})
   const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)
-
-  // base64 cache so we don't re-read file for upload/telegram
-  const base64Cache = useRef({})
 
   const addFiles = useCallback((incoming) => {
     const valid = Array.from(incoming)
@@ -295,7 +196,6 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
     })
   }, [])
 
-  // Auto-process cameraFile from FAB
   useEffect(() => {
     if (!cameraFile) return
     addFiles([cameraFile])
@@ -306,23 +206,24 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
   const removeFile = f => setFiles(p => p.filter(x => x !== f))
   const handleDrop = e => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files) }
 
-  // ── Extract ─────────────────────────────────────────────────
+  // ── Extract ──────────────────────────────────────────────────
   const handleExtract = async (file) => {
     const key = fileKey(file)
     setStates(s => ({ ...s, [key]: 'loading' }))
     setProgress(s => ({ ...s, [key]: 0 }))
     try {
       const b64      = await readFileAsBase64(file)
-      base64Cache.current[key] = { b64, mime: file.type || getMimeType(file.name) || 'image/jpeg' }
       const mimeType = file.type || getMimeType(file.name) || 'image/jpeg'
+      base64Cache.current[key] = { b64, mime: mimeType }
       const result   = await extractReceiptData(b64, mimeType, file.name, file,
         pct => setProgress(s => ({ ...s, [key]: pct }))
       )
+      base64Cache.current[key] = { b64: result.compressedBase64 || b64, mime: 'image/jpeg' }
       setResults(s => ({ ...s, [key]: result }))
       setStates( s => ({ ...s, [key]: 'done' }))
     } catch (e) {
       setStates( s => ({ ...s, [key]: 'error' }))
-      setResults(s => ({ ...s, [key]: { error: e.message } }))
+      setResults(s => ({ ...s, [key]: { error: String(e.message || e) } }))
     }
   }
 
@@ -333,123 +234,87 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
     })
   }
 
-  // ── Add to dashboard ─────────────────────────────────────────
-  const handleAdd = (file) => {
-    const key = fileKey(file)
-    const r   = results[key]
-    if (r && !r.error) {
-      onExtracted(r)
-      setAddedSet(s => new Set([...s, key]))
-    }
-  }
-
-  // ── Upload to OneDrive ────────────────────────────────────────
-  const handleUploadOneDrive = async (file) => {
-    const key    = fileKey(file)
-    const cached = base64Cache.current[key]
-    if (!cached) return
-
-    setUploadStates(s => ({ ...s, [key]: 'loading' }))
-    setActionErrors(s => ({ ...s, [key+'_od']: null }))
-    try {
-      const uploaded = await uploadToOneDrive(file, cached.b64, cached.mime)
-      setUploadStates(s => ({ ...s, [key]: 'done' }))
-      // Also update imageNote in result
-      setResults(s => ({ ...s, [key]: { ...s[key], imageNote: uploaded.webUrl } }))
-    } catch (e) {
-      setUploadStates(s => ({ ...s, [key]: 'error' }))
-      setActionErrors(s => ({ ...s, [key+'_od']: e.message }))
-    }
-  }
-
-  // ── Send to Telegram ──────────────────────────────────────────
-  const handleSendTelegram = async (file) => {
-    const key    = fileKey(file)
-    const cached = base64Cache.current[key]
-    const result = results[key]
-    if (!cached || !result) return
-
-    setTelegramStates(s => ({ ...s, [key]: 'loading' }))
-    setActionErrors(s => ({ ...s, [key+'_tg']: null }))
-    try {
-      await sendReceiptToTelegram(cached.b64, cached.mime, result)
-      setTelegramStates(s => ({ ...s, [key]: 'done' }))
-    } catch (e) {
-      setTelegramStates(s => ({ ...s, [key]: 'error' }))
-      setActionErrors(s => ({ ...s, [key+'_tg']: e.message }))
-    }
-  }
-
-  // ── Save Receipt: all-in-one ──────────────────────────────
+  // ── Save All (dashboard + gist + telegram + onedrive) ────────
   const handleSaveAll = async (file) => {
     const key    = fileKey(file)
     const cached = base64Cache.current[key]
     const result = results[key]
-    if (!cached || !result) return
+    if (!cached || !result || result.error) return
 
     setSaveAllStates(s => ({ ...s, [key]: 'loading' }))
     setSaveAllLogs(s => ({ ...s, [key]: [] }))
-
     const log = []
-
     const addLog = (label, ok, error = null) => {
-      log.push({ label, ok, error })
+      log.push({ label, ok, error: error ? String(error) : null })
       setSaveAllLogs(s => ({ ...s, [key]: [...log] }))
-      if (!ok) console.warn(`[SaveAll] ${label} failed:`, error)
+      if (!ok) console.warn(`[SaveAll] ${label}:`, error)
     }
 
-    // Run all 4 in parallel — failures are logged, not thrown
     await Promise.allSettled([
-
-      // 1. Add to Dashboard
+      // 1. Add to dashboard (calls onExtracted which opens pre-filled modal)
       (async () => {
         try {
-          onExtracted(result)
+          onExtracted({ ...result, imageNote: cached.webUrl || '' })
           setAddedSet(s => new Set([...s, key]))
           addLog('📊 Added to Dashboard', true)
-        } catch (e) {
-          addLog('📊 Dashboard', false, e.message)
-        }
+        } catch (e) { addLog('📊 Dashboard', false, e.message) }
       })(),
 
-      // 2. Save to GitHub Gist (handled automatically by App.jsx on receipt add)
-      //    We log it as success since App auto-syncs
-      (async () => {
-        addLog('💾 Saved to GitHub Gist', true)
-      })(),
+      // 2. Gist auto-saves via App.jsx useEffect — log as success
+      (async () => { addLog('💾 GitHub Gist', true) })(),
 
-      // 3. Send to Telegram
+      // 3. Telegram
       (async () => {
         try {
           await sendReceiptToTelegram(cached.b64, cached.mime, result)
           setTelegramStates(s => ({ ...s, [key]: 'done' }))
-          addLog('📱 Sent to Telegram', true)
+          addLog('📱 Telegram', true)
         } catch (e) {
           setTelegramStates(s => ({ ...s, [key]: 'error' }))
           addLog('📱 Telegram', false, e.message)
         }
       })(),
 
-      // 4. Upload to OneDrive
+      // 4. OneDrive
       (async () => {
         try {
           const uploaded = await uploadToOneDrive(file, cached.b64, cached.mime)
           setUploadStates(s => ({ ...s, [key]: 'done' }))
-          setResults(s => ({ ...s, [key]: { ...s[key], imageNote: uploaded.webUrl } }))
-          addLog('☁️ Uploaded to OneDrive', true)
+          cached.webUrl = uploaded.webUrl
+          addLog('☁️ OneDrive', true)
         } catch (e) {
           setUploadStates(s => ({ ...s, [key]: 'error' }))
           addLog('☁️ OneDrive', false, e.message)
         }
       })(),
-
     ])
 
     setSaveAllStates(s => ({ ...s, [key]: 'done' }))
   }
 
+  // ── Individual actions ────────────────────────────────────────
+  const handleUploadOneDrive = async (file) => {
+    const key = fileKey(file); const cached = base64Cache.current[key]
+    if (!cached) return
+    setUploadStates(s => ({ ...s, [key]: 'loading' }))
+    try {
+      await uploadToOneDrive(file, cached.b64, cached.mime)
+      setUploadStates(s => ({ ...s, [key]: 'done' }))
+    } catch (e) { setUploadStates(s => ({ ...s, [key]: 'error' })) }
+  }
+
+  const handleSendTelegram = async (file) => {
+    const key = fileKey(file); const cached = base64Cache.current[key]; const result = results[key]
+    if (!cached || !result) return
+    setTelegramStates(s => ({ ...s, [key]: 'loading' }))
+    try {
+      await sendReceiptToTelegram(cached.b64, cached.mime, result)
+      setTelegramStates(s => ({ ...s, [key]: 'done' }))
+    } catch (e) { setTelegramStates(s => ({ ...s, [key]: 'error' })) }
+  }
+
   const handleCameraCapture = (e) => {
-    const f = Array.from(e.target.files)
+    const f = Array.from(e.target.files || [])
     if (!f.length) return
     addFiles(f)
     f.forEach(file => setTimeout(() => handleExtract(file), 200))
@@ -457,13 +322,11 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
   }
 
   const pendingCount = files.filter(f => { const k=fileKey(f); return !states[k]||states[k]==='idle'||states[k]==='error' }).length
-  const doneCount    = files.filter(f => states[fileKey(f)]==='done').length
-  const addedCount   = addedSet.size
 
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
 
-      {/* ── Camera button (mobile) ── */}
+      {/* Camera button */}
       <div style={{
         display:'flex', gap:10, padding:'14px 16px',
         background:'linear-gradient(135deg,#6366f118,#a78bfa12)',
@@ -471,11 +334,9 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
         alignItems:'center', flexWrap:'wrap'
       }}>
         <div style={{ flex:1, minWidth:160 }}>
-          <div style={{ fontSize:13, fontWeight:700, color:'var(--text-primary)', marginBottom:3 }}>
-            📸 Scan Receipt with Camera
-          </div>
+          <div style={{ fontSize:13, fontWeight:700, color:'var(--text-primary)', marginBottom:3 }}>📸 Scan Receipt</div>
           <div style={{ fontSize:11, color:'var(--text-muted)' }}>
-            {isMobile ? 'Tap to open camera — point at receipt, snap, done!' : 'On mobile: opens camera directly. On desktop: use drop zone below.'}
+            {isMobile ? 'Tap to open camera' : 'On mobile: opens camera. Desktop: use drop zone below.'}
           </div>
         </div>
         <input ref={cameraInputRef} type="file" accept="image/*" capture="environment"
@@ -484,21 +345,20 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
           display:'flex', alignItems:'center', gap:8,
           background:'linear-gradient(135deg,#6366f1,#a78bfa)', color:'#fff',
           border:'none', borderRadius:10, padding:'11px 20px', cursor:'pointer',
-          fontFamily:'Sora', fontWeight:700, fontSize:13,
-          boxShadow:'0 4px 16px rgba(99,102,241,0.4)', flexShrink:0,
+          fontFamily:'Sora', fontWeight:700, fontSize:13, flexShrink:0,
         }}>
           <Camera size={16}/> Scan Receipt
         </button>
       </div>
 
-      {/* ── OneDrive + drop banner ── */}
+      {/* OneDrive link */}
       <div style={{
         display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:8,
         padding:'10px 14px', background:'linear-gradient(135deg,#0078d410,#0f1623)',
         border:'1px solid #0078d420', borderRadius:'var(--radius)'
       }}>
         <div style={{ fontSize:12, color:'var(--text-muted)' }}>
-          ☁️ <strong style={{color:'var(--text-primary)'}}>From OneDrive:</strong> open folder → download image → drop below
+          ☁️ <strong style={{color:'var(--text-primary)'}}>From OneDrive:</strong> open folder → save image → drop below
         </div>
         <a href={SHARE_URL} target="_blank" rel="noopener noreferrer"
           style={{ ...actionBtn('#0078d4'), textDecoration:'none', padding:'6px 12px' }}>
@@ -506,7 +366,7 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
         </a>
       </div>
 
-      {/* ── Drop zone ── */}
+      {/* Drop zone */}
       <div
         onDragOver={e=>{e.preventDefault();setDragOver(true)}}
         onDragLeave={()=>setDragOver(false)}
@@ -515,47 +375,24 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
         style={{
           border:`2px dashed ${dragOver?'var(--accent)':'var(--border-light)'}`,
           borderRadius:'var(--radius)', padding: isMobile?'20px':'26px 20px',
-          textAlign:'center', cursor:'pointer', transition:'all 0.2s',
+          textAlign:'center', cursor:'pointer',
           background: dragOver ? 'var(--accent-dim)' : 'var(--bg-card)',
         }}>
         <input ref={fileInputRef} type="file" multiple accept={ACCEPTED}
           style={{ display:'none' }} onChange={e=>{addFiles(e.target.files);e.target.value=''}}/>
         <div style={{ fontSize:isMobile?26:30, marginBottom:7 }}>{dragOver?'📂':'⬆️'}</div>
         <div style={{ fontSize:13, fontWeight:600, color:dragOver?'var(--accent)':'var(--text-primary)', marginBottom:3 }}>
-          {isMobile ? 'Tap to choose from gallery' : 'Drop receipt images here or click to browse'}
+          {isMobile ? 'Tap to choose from gallery' : 'Drop images here or click to browse'}
         </div>
         <div style={{ fontSize:11, color:'var(--text-muted)' }}>JPG, PNG, PDF, HEIC — up to {MAX_FILES} files</div>
       </div>
 
-      {/* ── OneDrive Upload config ── */}
-      <div>
-        <button onClick={()=>setShowODConfig(v=>!v)}
-          style={{ display:'flex', alignItems:'center', gap:6, background:'none', border:'none',
-            color:'var(--text-muted)', cursor:'pointer', fontSize:12, fontFamily:'Sora', padding:'4px 0' }}>
-          <Settings size={12}/>
-          {showODConfig ? 'Hide' : 'Setup'} OneDrive Upload
-          {!isUploadConfigured() && <span style={badge('#f5a623')}>Not configured</span>}
-        </button>
-        {showODConfig && (
-          <div style={{ marginTop:8, animation:'fadeUp 0.2s ease' }}>
-            <UploadConfigPanel onSaved={()=>setShowODConfig(false)}/>
-          </div>
-        )}
-      </div>
-
-      {/* ── Telegram info ── */}
-      <div style={{ fontSize:11, color:'var(--text-dim)', padding:'8px 12px', background:'var(--bg-card)', borderRadius:8, border:'1px solid var(--border)' }}>
-        <strong style={{color:'var(--text-muted)'}}>📱 Telegram:</strong> Add <code style={{background:'var(--bg-primary)',padding:'1px 4px',borderRadius:3}}>TELEGRAM_BOT_TOKEN</code> and <code style={{background:'var(--bg-primary)',padding:'1px 4px',borderRadius:3}}>TELEGRAM_CHAT_ID</code> as secrets in your Cloudflare Worker to enable group notifications.
-      </div>
-
-      {/* ── File list ── */}
+      {/* File list */}
       {files.length > 0 && (
         <div>
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:10, flexWrap:'wrap', gap:8 }}>
             <div style={{ fontSize:13, color:'var(--text-muted)' }}>
               <strong style={{color:'var(--text-primary)'}}>{files.length}</strong> file{files.length>1?'s':''}
-              {doneCount > 0  && <> · <span style={{color:'#22c55e'}}>{doneCount} extracted</span></>}
-              {addedCount > 0 && <> · <span style={{color:'var(--accent)'}}>{addedCount} added</span></>}
             </div>
             <div style={{ display:'flex', gap:8 }}>
               {pendingCount > 0 && (
@@ -568,19 +405,13 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
                   <Sparkles size={12}/> Extract All ({pendingCount})
                 </button>
               )}
-              <button onClick={()=>{setFiles([]);setStates({});setResults({});setAddedSet(new Set());setUploadStates({});setTelegramStates({})}}
+              <button onClick={()=>{setFiles([]);setStates({});setResults({});setAddedSet(new Set());
+                setUploadStates({});setTelegramStates({});setSaveAllStates({});setSaveAllLogs({})}}
                 style={{ background:'transparent', border:'1px solid var(--border)', color:'var(--text-muted)', borderRadius:7, padding:'7px 12px', fontFamily:'Sora', fontSize:12, cursor:'pointer' }}>
                 Clear
               </button>
             </div>
           </div>
-
-          {/* Action errors */}
-          {Object.entries(actionErrors).map(([k, msg]) => msg && (
-            <div key={k} style={{ fontSize:11, color:'#ef4444', padding:'6px 10px', background:'#1a0a0a', borderRadius:6, border:'1px solid #ef444430', marginBottom:6 }}>
-              ⚠️ {k.endsWith('_od') ? 'OneDrive: ' : 'Telegram: '}{msg}
-            </div>
-          ))}
 
           <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
             {files.map(file => {
@@ -591,18 +422,16 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
                   file={file}
                   state={states[key] || 'idle'}
                   result={results[key]}
-                  added={addedSet.has(key)}
                   progress={progress[key] || 0}
                   uploadState={uploadStates[key] || 'idle'}
                   telegramState={telegramStates[key] || 'idle'}
                   saveAllState={saveAllStates[key] || 'idle'}
                   saveAllLog={saveAllLogs[key] || []}
                   onExtract={() => handleExtract(file)}
-                  onAdd={() => handleAdd(file)}
                   onRemove={() => removeFile(file)}
+                  onSaveAll={() => handleSaveAll(file)}
                   onUploadOneDrive={() => handleUploadOneDrive(file)}
                   onSendTelegram={() => handleSendTelegram(file)}
-                  onSaveAll={() => handleSaveAll(file)}
                 />
               )
             })}
@@ -615,7 +444,6 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
   )
 }
 
-// ── Shared styles ─────────────────────────────────────────────
 const aiBtn = {
   display:'flex', alignItems:'center', gap:5,
   background:'linear-gradient(135deg,#6366f120,#a78bfa20)',
@@ -630,10 +458,5 @@ const actionBtn = (color) => ({
 })
 const badge = (color) => ({
   fontSize:9, padding:'2px 6px', borderRadius:8, fontWeight:700,
-  letterSpacing:'0.05em', background:`${color}20`, color,
+  background:`${color}20`, color, border:`1px solid ${color}25`,
 })
-const inputStyle = {
-  background:'var(--bg-input)', border:'1px solid var(--border)', color:'var(--text-primary)',
-  borderRadius:8, padding:'8px 10px', fontFamily:'Sora,sans-serif', fontSize:13,
-  outline:'none', boxSizing:'border-box',
-}

@@ -119,7 +119,7 @@ export default function Dashboard({ receipts, filterMonth, setFilterMonth, filte
   }
 
   const avgPerTx = filtered.length ? total / filtered.length : 0
-  const thisMonthKey = format(new Date(), 'yyyy-MM')
+  const thisMonthKey = (() => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` })()
   const lastMonthKey = format(subMonths(new Date(), 1), 'yyyy-MM')
   const thisMonthTotal = receipts.filter(r => r.date?.startsWith(thisMonthKey)).reduce((s,r) => s+Number(r.amount||0), 0)
   const lastMonthTotal = receipts.filter(r => r.date?.startsWith(lastMonthKey)).reduce((s,r) => s+Number(r.amount||0), 0)

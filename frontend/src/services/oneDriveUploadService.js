@@ -86,6 +86,20 @@ async function getToken() {
     }
   }
 
+  // Mobile browsers often block popups — use redirect on mobile
+  const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)
+
+  if (isMobile) {
+    // Store intent and redirect — on return, acquireTokenSilent will work
+    try {
+      await app.loginRedirect({ scopes: SCOPES, prompt: 'select_account' })
+      // loginRedirect navigates away — code below won't run
+      return ''
+    } catch (e) {
+      console.warn('[MSAL] Redirect failed, trying popup:', e.message)
+    }
+  }
+
   try {
     const result = await app.loginPopup({ scopes: SCOPES, prompt: 'select_account' })
     return result.accessToken
