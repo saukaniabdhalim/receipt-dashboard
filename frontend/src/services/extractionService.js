@@ -6,7 +6,72 @@
 
 import { extractTextFromImage, parseReceiptText } from './ocrService.js'
 
-const PROXY_URL = 'https://spring-art-d63a.saukanihalim.workers.dev/'
+const PROXY_URL   = 'https://spring-art-d63a.saukanihalim.workers.dev/'
+const MAX_SIZE_MB = 1.5   // compress images larger than this before sending
+
+/**
+ * Compress an image File to under MAX_SIZE_MB using canvas
+ * Returns { base64, mimeType } — always JPEG after compression
+ */
+async function compressImage(file) {
+  // PDFs can't be compressed via canvas — return as-is
+  if (file.type === 'application/pdf') {
+    const b64 = await readFileAsBase64(file)
+    return { base64: b64, mimeType: 'application/pdf' }
+  }
+
+  const sizeMB = file.size / 1024 / 1024
+  if (sizeMB <= MAX_SIZE_MB) {
+    // Small enough — no compression needed
+    const b64 = await readFileAsBase64(file)
+    return { base64: b64, mimeType: file.type || 'image/jpeg' }
+  }
+
+  console.log(`[Compress] ${sizeMB.toFixed(1)}MB → compressing to ~${MAX_SIZE_MB}MB`)
+
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+
+      // Calculate scale to hit target size
+      const scale   = Math.sqrt(MAX_SIZE_MB / sizeMB) * 0.9
+      const width   = Math.round(img.width  * scale)
+      const height  = Math.round(img.height * scale)
+
+      const canvas  = document.createElement('canvas')
+      canvas.width  = width
+      canvas.height = height
+
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(img, 0, 0, width, height)
+
+      // Try quality 0.85 first, go lower if still too big
+      let quality = 0.85
+      let dataUrl = canvas.toDataURL('image/jpeg', quality)
+
+      // Rough size check — base64 is ~1.33x the binary size
+      while (dataUrl.length > MAX_SIZE_MB * 1024 * 1024 * 1.33 && quality > 0.3) {
+        quality -= 0.1
+        dataUrl = canvas.toDataURL('image/jpeg', quality)
+      }
+
+      const base64 = dataUrl.split(',')[1]
+      console.log(`[Compress] Done — quality ${quality.toFixed(1)}, size ~${(base64.length * 0.75 / 1024 / 1024).toFixed(1)}MB`)
+      resolve({ base64, mimeType: 'image/jpeg' })
+    }
+
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      // Fallback — send original
+      readFileAsBase64(file).then(b64 => resolve({ base64: b64, mimeType: file.type || 'image/jpeg' }))
+    }
+
+    img.src = url
+  })
+}
 
 const CATEGORIES = [
   'food','transport','toll','utilities','shopping',
@@ -79,11 +144,12 @@ async function extractWithClaude(base64Data, mimeType, filename) {
   console.log('[Claude] status:', response.status, '| raw:', rawText.slice(0, 200))
 
   if (!response.ok) {
-    let errMsg = `status_${response.status}`
+    let errMsg = `Proxy error ${response.status}`
     try {
       const e = JSON.parse(rawText)
-      errMsg = e?.error?.message || e?.message || errMsg
+      errMsg = e?.error?.message || e?.error || e?.message || errMsg
     } catch {}
+    // Show the real error — not a generic message
     throw new Error(errMsg)
   }
 
@@ -125,9 +191,23 @@ async function extractWithOCR(file, onProgress) {
 
 // ── Main export: tries Claude, falls back to OCR ─────────────
 export async function extractReceiptData(base64Data, mimeType, filename = '', file = null, onProgress = null) {
+  // ── Compress image if too large ──
+  let finalBase64 = base64Data
+  let finalMime   = mimeType
+
+  if (file && file.type !== 'application/pdf') {
+    try {
+      const compressed = await compressImage(file)
+      finalBase64 = compressed.base64
+      finalMime   = compressed.mimeType
+    } catch (e) {
+      console.warn('[Compress] Failed, using original:', e.message)
+    }
+  }
+
   // ── Try Claude first ──
   try {
-    const result = await extractWithClaude(base64Data, mimeType, filename)
+    const result = await extractWithClaude(finalBase64, finalMime, filename)
     console.log('[Extraction] ✓ Claude succeeded')
     return result
   } catch (claudeErr) {
@@ -149,7 +229,7 @@ export async function extractReceiptData(base64Data, mimeType, filename = '', fi
 
     // ── Fallback to free OCR ──
     if (!file) {
-      throw new Error(`AI unavailable (${msg.slice(0,60)}). Provide the file object for OCR fallback.`)
+      throw new Error(`AI unavailable (${msg.slice(0,60)})`)
     }
 
     console.log('[Extraction] Falling back to Tesseract OCR…')
