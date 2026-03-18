@@ -1,6 +1,10 @@
 // ─────────────────────────────────────────────────────────────
-// AI Receipt Extraction — sends image to Claude, returns data
+// AI Receipt Extraction
+// Routes through Cloudflare Worker proxy to keep API key hidden
+// Worker URL: https://spring-art-d63a.saukanihalim.workers.dev/
 // ─────────────────────────────────────────────────────────────
+
+const PROXY_URL = 'https://spring-art-d63a.saukanihalim.workers.dev/'
 
 const CATEGORIES = [
   'food','transport','toll','utilities','shopping',
@@ -22,7 +26,7 @@ Return this exact shape:
 }
 
 Rules:
-- date must be YYYY-MM-DD. If year not visible assume current year.
+- date must be YYYY-MM-DD. If year not visible assume current year 2026.
 - amount is a number only (no currency symbol). Use the TOTAL/GRAND TOTAL.
 - currency: default MYR for Malaysian receipts. Look for RM symbol.
 - category: pick best match from list.
@@ -32,7 +36,7 @@ Rules:
 - If a field cannot be determined, use null.`
 
 export async function extractReceiptData(base64Data, mimeType, filename = '') {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const response = await fetch(PROXY_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -42,8 +46,14 @@ export async function extractReceiptData(base64Data, mimeType, filename = '') {
       messages: [{
         role: 'user',
         content: [
-          { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64Data } },
-          { type: 'text', text: `Extract receipt data. Filename hint: "${filename}". Return ONLY valid JSON.` }
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: mimeType, data: base64Data }
+          },
+          {
+            type: 'text',
+            text: `Extract receipt data. Filename hint: "${filename}". Return ONLY valid JSON.`
+          }
         ]
       }]
     })
@@ -51,7 +61,7 @@ export async function extractReceiptData(base64Data, mimeType, filename = '') {
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}))
-    throw new Error(err?.error?.message || `API error ${response.status}`)
+    throw new Error(err?.error?.message || `Proxy error ${response.status} — check Cloudflare Worker logs`)
   }
 
   const data = await response.json()
@@ -69,7 +79,7 @@ export async function extractReceiptData(base64Data, mimeType, filename = '') {
       confidence:  p.confidence  || 'medium',
     }
   } catch {
-    throw new Error('AI could not parse this image as a receipt')
+    throw new Error('AI could not parse this receipt image — try a clearer photo')
   }
 }
 
@@ -81,9 +91,11 @@ function validateDate(str) {
 
 export function getMimeType(filename) {
   const ext = (filename || '').split('.').pop().toLowerCase()
-  return { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png',
-           gif:'image/gif', webp:'image/webp', heic:'image/heic',
-           bmp:'image/bmp', pdf:'application/pdf' }[ext] || 'image/jpeg'
+  return {
+    jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png',
+    gif:'image/gif',  webp:'image/webp', heic:'image/heic',
+    bmp:'image/bmp',  pdf:'application/pdf'
+  }[ext] || 'image/jpeg'
 }
 
 export function readFileAsBase64(file) {
