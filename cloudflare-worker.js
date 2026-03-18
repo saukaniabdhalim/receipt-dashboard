@@ -149,6 +149,7 @@ async function handleGistLoad(env) {
     headers: {
       'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
       'Accept':        'application/vnd.github+json',
+      'User-Agent':    'ResitDashboard/1.0',
     }
   })
 
@@ -186,6 +187,7 @@ async function handleGistSave(request, env) {
       'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
       'Accept':        'application/vnd.github+json',
       'Content-Type':  'application/json',
+      'User-Agent':    'ResitDashboard/1.0',
     },
     body: JSON.stringify({
       files: {
