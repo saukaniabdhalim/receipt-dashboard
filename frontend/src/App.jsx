@@ -51,50 +51,55 @@ export default function App() {
   // ── Init: load data ─────────────────────────────────────────
   useEffect(() => {
     const init = async () => {
-      // Always try to load from Worker/Gist first
+      // 1. Load from localStorage immediately so UI is never blank
+      try {
+        const raw = localStorage.getItem(LOCAL_KEY)
+        if (raw) {
+          const local = JSON.parse(raw)
+          if (local.length > 0) setReceipts(local)
+        }
+      } catch {}
+
+      // 2. Then try to sync from Gist in background
       setSyncStatus('syncing')
       try {
         const remote = await loadFromGist()
         if (remote.length > 0) {
           setReceipts(remote)
           localStorage.setItem(LOCAL_KEY, JSON.stringify(remote))
-        } else {
-          // Gist is empty — check localStorage
-          const raw = localStorage.getItem(LOCAL_KEY)
-          setReceipts(raw ? JSON.parse(raw) : [])
         }
         setSyncStatus('synced')
       } catch (e) {
+        // Gist failed — keep whatever is in localStorage, just log the error
         setSyncStatus('error')
         setSyncError(e.message)
-        // Fall back to localStorage
-        try {
-          const raw = localStorage.getItem(LOCAL_KEY)
-          setReceipts(raw ? JSON.parse(raw) : [])
-        } catch { setReceipts([]) }
+        console.warn('[Gist] Load failed, using localStorage:', e.message)
       }
     }
     init()
   }, [])
 
-  // ── Auto-save: local + debounced Gist ──────────────────────
+  // ── Auto-save: localStorage immediately + debounced Gist ───
   useEffect(() => {
-    if (!receipts.length) return
-    localStorage.setItem(LOCAL_KEY, JSON.stringify(receipts))
-
-    if (isConfigured()) {
-      clearTimeout(saveTimeout.current)
-      saveTimeout.current = setTimeout(async () => {
-        setSyncStatus('syncing')
-        try {
-          await saveToGist(receipts)
-          setSyncStatus('synced')
-        } catch (e) {
-          setSyncStatus('error')
-          setSyncError(e.message)
-        }
-      }, 1500)  // debounce 1.5s
+    // Always save to localStorage regardless of gist status
+    if (receipts.length > 0) {
+      localStorage.setItem(LOCAL_KEY, JSON.stringify(receipts))
     }
+
+    // Debounced background sync to Gist
+    clearTimeout(saveTimeout.current)
+    saveTimeout.current = setTimeout(async () => {
+      if (receipts.length === 0) return
+      setSyncStatus('syncing')
+      try {
+        await saveToGist(receipts)
+        setSyncStatus('synced')
+      } catch (e) {
+        setSyncStatus('error')
+        setSyncError(e.message)
+        console.warn('[Gist] Save failed (data safe in localStorage):', e.message)
+      }
+    }, 1500)
   }, [receipts])
 
   // ── Toast helper ────────────────────────────────────────────
