@@ -97,7 +97,7 @@ async function getToken() {
 
   const app     = await getMsalApp(clientId)
   const request = {
-    scopes,
+    scopes: SCOPES,
     prompt: 'select_account',
   }
   const accounts = app.getAllAccounts()
