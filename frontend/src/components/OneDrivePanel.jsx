@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { extractReceiptData, getMimeType, readFileAsBase64 } from '../services/extractionService.js'
 import { sendReceiptToTelegram }   from '../services/telegramService.js'
-import { uploadToOneDrive, isUploadConfigured, getClientId, saveClientId, clearAllMsalState } from '../services/oneDriveUploadService.js'
+import { uploadToOneDrive, isUploadConfigured, getClientId, saveClientId } from '../services/oneDriveUploadService.js'
 import { SHARE_URL } from '../services/oneDriveService.js'
 import {
   Upload, Image, FileText, Sparkles, CheckCircle,

@@ -159,7 +159,7 @@ export default function App() {
   }
   const handleDisconnect = () => {
     if (confirm('Disconnect GitHub Gist? Your local data stays — it just won\'t sync to GitHub anymore.')) {
-      clearSettings()
+      // disconnected
       setGistConnected(false)
       setGhUser(null)
       setSyncStatus('idle')
@@ -167,7 +167,6 @@ export default function App() {
     }
   }
   const handleManualSync = async () => {
-    if (!isConfigured()) return
     setSyncStatus('syncing')
     try {
       await saveToGist(receipts)
@@ -286,12 +285,7 @@ export default function App() {
                       : 'GitHub Gist ✓'}
                   </span>
                 </div>
-                {getGistUrl() && (
-                  <a href={getGistUrl()} target="_blank" rel="noopener noreferrer"
-                    style={{ fontSize:10, color:'#3b82f6', textDecoration:'none' }}>
-                    View Gist →
-                  </a>
-                )}
+
                 <div style={{ display:'flex', gap:4, marginTop:2 }}>
                   <button onClick={handleManualSync} disabled={syncStatus==='syncing'}
                     style={{ ...smallBtnStyle('#22c55e'), flex:1 }}>
