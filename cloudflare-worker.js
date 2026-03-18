@@ -22,7 +22,7 @@
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, x-app-secret',
   'Access-Control-Max-Age':       '86400',
 }
 
@@ -46,6 +46,15 @@ export default {
     }
 
     const pathname = new URL(request.url).pathname.replace(/\/+$/, '') || '/'
+
+    // ── Verify app secret header (prevents WAF false positives) ──
+    // Only check for non-GET requests with body
+    if (request.method === 'POST' && env.APP_SECRET) {
+      const clientSecret = request.headers.get('x-app-secret')
+      if (clientSecret !== env.APP_SECRET) {
+        return json({ error: { message: 'Unauthorized' } }, 401)
+      }
+    }
 
     // ── GET /config — returns public config to the app ───────
     if (request.method === 'GET' && pathname === '/config') {

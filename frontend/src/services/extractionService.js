@@ -100,7 +100,7 @@ async function extractWithClaude(base64Data, mimeType, filename) {
   try {
     response = await fetch(PROXY_URL, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-app-secret': 'RESIT2026DASHBOARD' },
       body: JSON.stringify({
         model:      'claude-sonnet-4-20250514',
         max_tokens: 800,

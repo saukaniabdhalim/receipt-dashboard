@@ -48,7 +48,7 @@ function capitalize(str) {
 export async function sendReceiptToTelegram(base64Image, mimeType, receiptData) {
   const response = await fetch(TELEGRAM_PROXY, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-app-secret': 'RESIT2026DASHBOARD' },
     body: JSON.stringify({
       image:    base64Image,
       mimeType: mimeType,
