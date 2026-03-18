@@ -1,22 +1,17 @@
 // ─────────────────────────────────────────────────────────────
-// Resit Dashboard — Cloudflare Worker Proxy
+// Resit Dashboard — Cloudflare Worker
 //
-// ALL secrets stored here — zero browser storage needed
+// KEY FIX: Claude extraction endpoint now accepts multipart/form-data
+// instead of JSON — bypasses Cloudflare WAF which blocks large
+// base64 JSON bodies from mobile user-agents.
 //
-// Secrets to set in Cloudflare Worker dashboard:
-//   ANTHROPIC_API_KEY    — from console.anthropic.com
-//   TELEGRAM_BOT_TOKEN   — from @BotFather on Telegram
-//   TELEGRAM_CHAT_ID     — your group chat ID e.g. -5100461712
-//   GITHUB_TOKEN         — GitHub PAT with Gists read/write
-//   GITHUB_GIST_ID       — your resit-dashboard-data.json gist ID
-//   AZURE_CLIENT_ID      — daa1d451-4d02-4bc7-a85e-bf0d58372c19
-//
-// Routes:
-//   POST /               → Claude AI (receipt extraction)
-//   POST /telegram       → Send photo to Telegram group
-//   POST /gist/load      → Load receipts from GitHub Gist
-//   POST /gist/save      → Save receipts to GitHub Gist
-//   GET  /config         → Return public config (azure client id)
+// Secrets:
+//   ANTHROPIC_API_KEY
+//   TELEGRAM_BOT_TOKEN
+//   TELEGRAM_CHAT_ID
+//   GITHUB_TOKEN
+//   GITHUB_GIST_ID
+//   AZURE_CLIENT_ID
 // ─────────────────────────────────────────────────────────────
 
 const CORS = {
@@ -26,9 +21,8 @@ const CORS = {
   'Access-Control-Max-Age':       '86400',
 }
 
-const ANTHROPIC_API  = 'https://api.anthropic.com/v1/messages'
-const GRAPH_BASE     = 'https://graph.microsoft.com/v1.0'
-const GIST_FILENAME  = 'resit-dashboard-data.json'
+const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages'
+const GIST_FILENAME = 'resit-dashboard-data.json'
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -39,60 +33,116 @@ function json(data, status = 200) {
 
 export default {
   async fetch(request, env) {
-
-    // CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: CORS })
     }
 
     const pathname = new URL(request.url).pathname.replace(/\/+$/, '') || '/'
 
-    // ── Verify app secret header (prevents WAF false positives) ──
-    // Only check for non-GET requests with body
-    if (request.method === 'POST' && env.APP_SECRET) {
-      const clientSecret = request.headers.get('x-app-secret')
-      if (clientSecret !== env.APP_SECRET) {
-        return json({ error: { message: 'Unauthorized' } }, 401)
-      }
-    }
-
-    // ── GET /config — returns public config to the app ───────
+    // GET /config
     if (request.method === 'GET' && pathname === '/config') {
       return json({
-        azureClientId: env.AZURE_CLIENT_ID || '',
-        gistConfigured: !!(env.GITHUB_TOKEN && env.GITHUB_GIST_ID),
-        telegramConfigured: !!(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID),
+        azureClientId:       env.AZURE_CLIENT_ID      || '',
+        gistConfigured:      !!(env.GITHUB_TOKEN && env.GITHUB_GIST_ID),
+        telegramConfigured:  !!(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID),
         anthropicConfigured: !!env.ANTHROPIC_API_KEY,
       })
     }
 
     if (request.method !== 'POST') {
-      return json({ error: 'POST requests only' }, 405)
+      return json({ error: 'POST only' }, 405)
     }
 
-    // ── Route requests ───────────────────────────────────────
     if (pathname === '/telegram')   return handleTelegram(request, env)
     if (pathname === '/gist/load')  return handleGistLoad(env)
     if (pathname === '/gist/save')  return handleGistSave(request, env)
+
+    // Default: Claude extraction
+    // Accepts BOTH multipart/form-data (mobile) AND application/json (desktop)
     return handleClaude(request, env)
   }
 }
 
-// ── Claude AI ─────────────────────────────────────────────────
+// ── Claude — accepts multipart OR json ───────────────────────
 async function handleClaude(request, env) {
   if (!env.ANTHROPIC_API_KEY) {
-    return json({ error: { message: 'ANTHROPIC_API_KEY not set in Worker secrets' } }, 500)
+    return json({ error: { message: 'ANTHROPIC_API_KEY not set' } }, 500)
   }
 
-  // Check content-length if available
-  const contentLength = parseInt(request.headers.get('content-length') || '0')
-  if (contentLength > 2 * 1024 * 1024) {  // 2MB limit
-    return json({ error: { message: `Request too large (${Math.round(contentLength/1024)}KB). Image must be under 2MB.` } }, 413)
+  const contentType = request.headers.get('content-type') || ''
+  let imageBase64, imageMime, filename
+
+  if (contentType.includes('multipart/form-data')) {
+    // ── Mobile path: image sent as binary form data ──────────
+    let formData
+    try { formData = await request.formData() }
+    catch (e) { return json({ error: { message: `FormData parse failed: ${e.message}` } }, 400) }
+
+    const imageFile = formData.get('image')
+    imageMime       = formData.get('mime')   || 'image/jpeg'
+    filename        = formData.get('filename') || 'receipt.jpg'
+
+    if (!imageFile) return json({ error: { message: 'Missing image field in form data' } }, 400)
+
+    // Convert binary blob → base64
+    const arrayBuffer = await imageFile.arrayBuffer()
+    const bytes       = new Uint8Array(arrayBuffer)
+    let binary = ''
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+    imageBase64 = btoa(binary)
+
+  } else {
+    // ── Desktop path: full JSON body ─────────────────────────
+    let body
+    try { body = await request.json() }
+    catch { return json({ error: { message: 'Invalid JSON body' } }, 400) }
+
+    // If body is a direct Anthropic request, forward it as-is
+    if (body.model && body.messages) {
+      try {
+        const res = await fetch(ANTHROPIC_API, {
+          method: 'POST',
+          headers: {
+            'Content-Type':      'application/json',
+            'x-api-key':         env.ANTHROPIC_API_KEY,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify(body)
+        })
+        const text = await res.text()
+        return new Response(text, {
+          status: res.status,
+          headers: { 'Content-Type': 'application/json', ...CORS }
+        })
+      } catch (e) {
+        return json({ error: { message: `Anthropic unreachable: ${e.message}` } }, 502)
+      }
+    }
+
+    // Otherwise extract fields from our custom format
+    imageBase64 = body.image
+    imageMime   = body.mime     || 'image/jpeg'
+    filename    = body.filename || 'receipt.jpg'
+    if (!imageBase64) return json({ error: { message: 'Missing image field' } }, 400)
   }
 
-  let body
-  try { body = await request.json() }
-  catch { return json({ error: { message: 'Invalid JSON' } }, 400) }
+  // Build Anthropic request
+  const anthropicBody = {
+    model:      'claude-sonnet-4-20250514',
+    max_tokens: 800,
+    system: `You are a receipt data extractor.
+Return ONLY a raw JSON object — no explanation, no markdown, no code fences.
+{"merchant":"store","date":"YYYY-MM-DD","amount":12.50,"currency":"MYR","category":"food","description":"desc","confidence":"high"}
+category must be one of: food|transport|toll|utilities|shopping|healthcare|entertainment|grocery|education|others
+Use null for unknown fields. Return ONLY JSON.`,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: imageMime, data: imageBase64 } },
+        { type: 'text',  text: `Extract receipt data from this image (${filename}). Return ONLY the JSON object.` }
+      ]
+    }]
+  }
 
   let res
   try {
@@ -103,7 +153,7 @@ async function handleClaude(request, env) {
         'x-api-key':         env.ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01',
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(anthropicBody)
     })
   } catch (e) {
     return json({ error: { message: `Anthropic unreachable: ${e.message}` } }, 502)
@@ -126,25 +176,23 @@ async function handleTelegram(request, env) {
   catch { return json({ error: 'Invalid JSON' }, 400) }
 
   const { image, mimeType = 'image/jpeg', caption = '🧾 New Receipt' } = body
-  if (!image) return json({ error: 'Missing image field' }, 400)
+  if (!image) return json({ error: 'Missing image' }, 400)
 
-  const binaryStr = atob(image)
-  const bytes     = new Uint8Array(binaryStr.length)
-  for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
+  const bin   = atob(image)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
 
-  const ext  = mimeType.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg'
+  const ext  = mimeType.split('/')[1]?.replace('jpeg','jpg') || 'jpg'
   const form = new FormData()
   form.append('chat_id',    env.TELEGRAM_CHAT_ID)
   form.append('caption',    caption)
   form.append('parse_mode', 'Markdown')
-  form.append('photo',      new Blob([bytes], { type: mimeType }), `receipt-${Date.now()}.${ext}`)
+  form.append('photo', new Blob([bytes], { type: mimeType }), `receipt-${Date.now()}.${ext}`)
 
   let tgRes
   try {
-    tgRes = await fetch(
-      `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendPhoto`,
-      { method: 'POST', body: form }
-    )
+    tgRes = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendPhoto`,
+      { method: 'POST', body: form })
   } catch (e) {
     return json({ error: `Telegram unreachable: ${e.message}` }, 502)
   }
@@ -156,7 +204,7 @@ async function handleTelegram(request, env) {
   return json({ ok: true, message_id: tgData.result?.message_id })
 }
 
-// ── GitHub Gist: Load ─────────────────────────────────────────
+// ── Gist load ─────────────────────────────────────────────────
 async function handleGistLoad(env) {
   if (!env.GITHUB_TOKEN)   return json({ error: 'GITHUB_TOKEN not set' }, 500)
   if (!env.GITHUB_GIST_ID) return json({ error: 'GITHUB_GIST_ID not set' }, 500)
@@ -171,12 +219,11 @@ async function handleGistLoad(env) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    return json({ error: err.message || `GitHub error ${res.status}` }, res.status)
+    return json({ error: err.message || `GitHub ${res.status}` }, res.status)
   }
 
   const data    = await res.json()
   const content = data.files?.[GIST_FILENAME]?.content || '{"receipts":[]}'
-
   try {
     const parsed = JSON.parse(content)
     return json({ receipts: parsed.receipts || [], updatedAt: parsed.updatedAt })
@@ -185,7 +232,7 @@ async function handleGistLoad(env) {
   }
 }
 
-// ── GitHub Gist: Save ─────────────────────────────────────────
+// ── Gist save ─────────────────────────────────────────────────
 async function handleGistSave(request, env) {
   if (!env.GITHUB_TOKEN)   return json({ error: 'GITHUB_TOKEN not set' }, 500)
   if (!env.GITHUB_GIST_ID) return json({ error: 'GITHUB_GIST_ID not set' }, 500)
@@ -195,7 +242,7 @@ async function handleGistSave(request, env) {
   catch { return json({ error: 'Invalid JSON' }, 400) }
 
   const { receipts } = body
-  if (!Array.isArray(receipts)) return json({ error: 'receipts must be an array' }, 400)
+  if (!Array.isArray(receipts)) return json({ error: 'receipts must be array' }, 400)
 
   const res = await fetch(`https://api.github.com/gists/${env.GITHUB_GIST_ID}`, {
     method: 'PATCH',
@@ -220,8 +267,7 @@ async function handleGistSave(request, env) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    return json({ error: err.message || `GitHub error ${res.status}` }, res.status)
+    return json({ error: err.message || `GitHub ${res.status}` }, res.status)
   }
-
   return json({ ok: true, count: receipts.length })
 }

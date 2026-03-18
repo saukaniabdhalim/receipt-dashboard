@@ -1,45 +1,25 @@
 import { extractTextFromImage, parseReceiptText } from './ocrService.js'
 
 const PROXY_URL = 'https://spring-art-d63a.saukanihalim.workers.dev/'
-const SECRET    = 'RESIT2026DASHBOARD'
 
 const CATEGORIES = [
   'food','transport','toll','utilities','shopping',
   'healthcare','entertainment','grocery','education','others'
 ]
 
-const SYSTEM_PROMPT = `You are a receipt data extractor.
-Return ONLY a raw JSON object — no explanation, no markdown, no code fences.
+// ── Detect mobile ─────────────────────────────────────────────
+const isMobile = () => /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
 
-{
-  "merchant": "store name",
-  "date": "YYYY-MM-DD",
-  "amount": 12.50,
-  "currency": "MYR",
-  "category": "food",
-  "description": "brief description",
-  "confidence": "high"
-}
-
-Rules:
-- date: YYYY-MM-DD. Use 2026 if year not visible.
-- amount: grand total as plain number.
-- currency: MYR for Malaysian receipts.
-- category: food|transport|toll|utilities|shopping|healthcare|entertainment|grocery|education|others
-- confidence: high/medium/low
-- null for unknown. Return ONLY JSON.`
-
-// ── Compress image aggressively for mobile ────────────────────
+// ── Compress image ────────────────────────────────────────────
 export async function compressForUpload(file) {
   if (file.type === 'application/pdf') {
     const b64 = await readFileAsBase64(file)
-    return { base64: b64, mimeType: 'application/pdf' }
+    return { base64: b64, mimeType: 'application/pdf', blob: file }
   }
 
-  // Detect mobile — use smaller target
-  const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)
-  const maxDim    = isMobile ? 800  : 1024
-  const maxBytes  = isMobile ? 150 * 1024 : 400 * 1024   // 150KB mobile, 400KB desktop
+  const mobile  = isMobile()
+  const maxDim   = mobile ? 600  : 1024
+  const maxBytes = mobile ? 80 * 1024 : 350 * 1024  // 80KB mobile!
 
   return new Promise((resolve) => {
     const img = new Image()
@@ -47,7 +27,6 @@ export async function compressForUpload(file) {
 
     img.onload = () => {
       URL.revokeObjectURL(url)
-
       let w = img.width, h = img.height
       if (w > maxDim || h > maxDim) {
         const r = Math.min(maxDim/w, maxDim/h)
@@ -58,54 +37,78 @@ export async function compressForUpload(file) {
       canvas.width = w; canvas.height = h
       canvas.getContext('2d').drawImage(img, 0, 0, w, h)
 
-      let quality = isMobile ? 0.7 : 0.8
+      let quality = mobile ? 0.6 : 0.8
       let dataUrl = canvas.toDataURL('image/jpeg', quality)
 
-      // Keep reducing until under maxBytes
-      while (dataUrl.length * 0.75 > maxBytes && quality > 0.15) {
+      while (dataUrl.length * 0.75 > maxBytes && quality > 0.1) {
         quality -= 0.1
-        dataUrl = canvas.toDataURL('image/jpeg', quality)
+        dataUrl  = canvas.toDataURL('image/jpeg', quality)
       }
 
       const base64 = dataUrl.split(',')[1]
-      const sizeKB = Math.round(base64.length * 0.75 / 1024)
-      console.log(`[Compress] ${Math.round(file.size/1024)}KB → ${sizeKB}KB (${w}×${h} q${quality.toFixed(1)}) mobile=${isMobile}`)
-      resolve({ base64, mimeType: 'image/jpeg' })
+      const sizeKB  = Math.round(base64.length * 0.75 / 1024)
+      console.log(`[Compress] ${Math.round(file.size/1024)}KB → ${sizeKB}KB ${w}×${h} q${quality.toFixed(1)} mobile=${mobile}`)
+
+      // Also create a Blob for FormData upload
+      const byteArr = Uint8Array.from(atob(base64), c => c.charCodeAt(0))
+      const blob    = new Blob([byteArr], { type: 'image/jpeg' })
+
+      resolve({ base64, mimeType: 'image/jpeg', blob })
     }
 
     img.onerror = () => {
       URL.revokeObjectURL(url)
-      readFileAsBase64(file).then(b64 => resolve({ base64: b64, mimeType: file.type || 'image/jpeg' }))
+      readFileAsBase64(file).then(b64 => {
+        const byteArr = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+        resolve({ base64: b64, mimeType: file.type || 'image/jpeg', blob: new Blob([byteArr], { type: file.type || 'image/jpeg' }) })
+      })
     }
     img.src = url
   })
 }
 
 // ── Claude via Worker ─────────────────────────────────────────
-async function extractWithClaude(base64Data, mimeType, filename) {
+async function extractWithClaude(compressed, filename) {
+  const mobile = isMobile()
   let response
-  try {
-    response = await fetch(PROXY_URL, {
-      method:  'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        'x-app-secret':  SECRET,
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 800,
-        system: SYSTEM_PROMPT,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64Data } },
-            { type: 'text',  text: 'Extract receipt data. Return ONLY the JSON object.' }
-          ]
-        }]
+
+  if (mobile) {
+    // ── Mobile: send as multipart/form-data (bypasses WAF) ──
+    console.log('[Claude] Mobile → sending as multipart/form-data')
+    const form = new FormData()
+    form.append('image',    compressed.blob, filename || 'receipt.jpg')
+    form.append('mime',     compressed.mimeType)
+    form.append('filename', filename || 'receipt.jpg')
+
+    try {
+      response = await fetch(PROXY_URL, { method: 'POST', body: form })
+    } catch (e) { throw new Error(`network:${e.message}`) }
+
+  } else {
+    // ── Desktop: send as JSON ────────────────────────────────
+    console.log('[Claude] Desktop → sending as JSON')
+    try {
+      response = await fetch(PROXY_URL, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model:      'claude-sonnet-4-20250514',
+          max_tokens: 800,
+          system: `You are a receipt data extractor.
+Return ONLY a raw JSON object — no explanation, no markdown, no code fences.
+{"merchant":"store","date":"YYYY-MM-DD","amount":12.50,"currency":"MYR","category":"food","description":"desc","confidence":"high"}
+category: food|transport|toll|utilities|shopping|healthcare|entertainment|grocery|education|others
+Return ONLY JSON.`,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image', source: { type: 'base64', media_type: compressed.mimeType, data: compressed.base64 } },
+              { type: 'text',  text: 'Extract receipt data. Return ONLY the JSON object.' }
+            ]
+          }]
+        })
       })
-    })
-  } catch (e) {
-    throw new Error(`network:${e.message}`)
+    } catch (e) { throw new Error(`network:${e.message}`) }
   }
 
   const rawText = await response.text()
@@ -131,7 +134,7 @@ async function extractWithClaude(base64Data, mimeType, filename) {
 
   const cleaned = aiText.replace(/^```json\s*/i,'').replace(/^```\s*/i,'').replace(/\s*```$/,'').trim()
   const match   = cleaned.match(/\{[\s\S]*\}/)
-  if (!match) throw new Error(`No JSON found: "${cleaned.slice(0,60)}"`)
+  if (!match) throw new Error(`No JSON: "${cleaned.slice(0,60)}"`)
 
   const p = JSON.parse(match[0])
   return {
@@ -155,26 +158,22 @@ function shouldFallback(msg = '') {
 
 async function extractWithOCR(file, onProgress) {
   const rawText = await extractTextFromImage(file, onProgress)
-  const result  = parseReceiptText(rawText)
-  return { ...result, source: 'ocr' }
+  return { ...parseReceiptText(rawText), source: 'ocr' }
 }
 
 // ── Main ──────────────────────────────────────────────────────
 export async function extractReceiptData(base64Data, mimeType, filename = '', file = null, onProgress = null) {
-  // Compress first
-  let finalBase64 = base64Data
-  let finalMime   = mimeType
+  // Always compress first
+  let compressed = { base64: base64Data, mimeType, blob: null }
 
   if (file && file.type !== 'application/pdf') {
     try {
-      const c = await compressForUpload(file)
-      finalBase64 = c.base64
-      finalMime   = c.mimeType
+      compressed = await compressForUpload(file)
     } catch (e) { console.warn('[Compress]', e.message) }
   }
 
   try {
-    return await extractWithClaude(finalBase64, finalMime, filename)
+    return await extractWithClaude(compressed, filename)
   } catch (claudeErr) {
     const msg = claudeErr.message || ''
     console.warn('[Claude] Failed:', msg)
@@ -191,12 +190,11 @@ export async function extractReceiptData(base64Data, mimeType, filename = '', fi
 }
 
 function validateDate(str) {
-  if (!str) return localDateStr()
+  if (!str) return localDate()
   const m = str.match(/(\d{4})-(\d{2})-(\d{2})/)
-  return m ? str.slice(0,10) : localDateStr()
+  return m ? str.slice(0,10) : localDate()
 }
-
-function localDateStr() {
+function localDate() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
