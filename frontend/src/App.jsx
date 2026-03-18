@@ -4,17 +4,14 @@ import Dashboard from './components/Dashboard.jsx'
 import ReceiptList from './components/ReceiptList.jsx'
 import AddReceiptModal from './components/AddReceiptModal.jsx'
 import OneDrivePanel from './components/OneDrivePanel.jsx'
-import GistSetupModal from './components/GistSetupModal.jsx'
+import SettingsPanel  from './components/SettingsPanel.jsx'
 import {
   LayoutDashboard, Receipt, CloudIcon, Plus, Menu,
   Download, Upload, Trash2, Github, Cloud, CloudOff,
-  RefreshCw, Loader
+  RefreshCw, Loader, Settings
 } from 'lucide-react'
 import { SHARE_URL } from './services/oneDriveService.js'
-import {
-  isConfigured, getSettings, clearSettings,
-  loadFromGist, saveToGist, getGistUrl
-} from './services/gistStorage.js'
+import { loadFromGist, saveToGist } from './services/gistStorage.js'
 
 // ── Categories ───────────────────────────────────────────────
 export const CATEGORIES = [
@@ -32,26 +29,6 @@ export const CATEGORIES = [
 
 const LOCAL_KEY = 'resit_dashboard_data'
 
-function seedData() {
-  const m = n => { const d=new Date(); d.setDate(d.getDate()-n); return d.toISOString().split('T')[0] }
-  return [
-    { id:uuidv4(), date:m(1),  merchant:'Tesco Ipoh',      category:'grocery',       amount:87.50,  description:'Weekly grocery',      currency:'MYR', imageNote:'' },
-    { id:uuidv4(), date:m(2),  merchant:'Petronas',         category:'transport',     amount:60.00,  description:'Petrol RON95',         currency:'MYR', imageNote:'' },
-    { id:uuidv4(), date:m(3),  merchant:'PLUS Highway',     category:'toll',          amount:12.30,  description:'KL-Ipoh toll',         currency:'MYR', imageNote:'' },
-    { id:uuidv4(), date:m(4),  merchant:"McDonald's",       category:'food',          amount:24.90,  description:'Lunch',                currency:'MYR', imageNote:'' },
-    { id:uuidv4(), date:m(5),  merchant:'TNB',              category:'utilities',     amount:135.00, description:'Electricity bill',     currency:'MYR', imageNote:'' },
-    { id:uuidv4(), date:m(6),  merchant:'Uniqlo',           category:'shopping',      amount:199.00, description:'Clothes',              currency:'MYR', imageNote:'' },
-    { id:uuidv4(), date:m(7),  merchant:'Klinik Kesihatan', category:'healthcare',    amount:15.00,  description:'GP visit',             currency:'MYR', imageNote:'' },
-    { id:uuidv4(), date:m(10), merchant:'Netflix',          category:'entertainment', amount:54.90,  description:'Monthly subscription', currency:'MYR', imageNote:'' },
-    { id:uuidv4(), date:m(12), merchant:'Mamak Corner',     category:'food',          amount:18.50,  description:'Dinner',               currency:'MYR', imageNote:'' },
-    { id:uuidv4(), date:m(15), merchant:'Grab',             category:'transport',     amount:22.00,  description:'GrabCar ride',         currency:'MYR', imageNote:'' },
-    { id:uuidv4(), date:m(20), merchant:'Guardian',         category:'healthcare',    amount:45.80,  description:'Medicine',             currency:'MYR', imageNote:'' },
-    { id:uuidv4(), date:m(22), merchant:'Aeon',             category:'shopping',      amount:320.00, description:'Household items',      currency:'MYR', imageNote:'' },
-    { id:uuidv4(), date:m(28), merchant:'Celcom',           category:'utilities',     amount:88.00,  description:'Mobile plan',          currency:'MYR', imageNote:'' },
-    { id:uuidv4(), date:m(35), merchant:'Pizza Hut',        category:'food',          amount:55.00,  description:'Family dinner',        currency:'MYR', imageNote:'' },
-    { id:uuidv4(), date:m(45), merchant:"Lotus's",          category:'grocery',       amount:95.30,  description:'Grocery',              currency:'MYR', imageNote:'' },
-  ]
-}
 
 // ── App ───────────────────────────────────────────────────────
 export default function App() {
@@ -64,8 +41,7 @@ export default function App() {
   const [filterCategory,  setFilterCategory] = useState('all')
   const [search,          setSearch]         = useState('')
   const [toast,           setToast]          = useState(null)
-  const [showGistSetup,   setShowGistSetup]  = useState(false)
-  const [gistConnected,   setGistConnected]  = useState(false)
+  const [gistConnected,   setGistConnected]  = useState(true)  // always true — managed by worker
   const [syncStatus,      setSyncStatus]     = useState('idle')   // idle|syncing|synced|error
   const [syncError,       setSyncError]      = useState('')
   const [ghUser,          setGhUser]         = useState(null)
@@ -75,37 +51,31 @@ export default function App() {
   // ── Init: load data ─────────────────────────────────────────
   useEffect(() => {
     const init = async () => {
-      if (isConfigured()) {
-        setGistConnected(true)
-        const { token } = getSettings()
-        // try to get username from cached settings
-        setSyncStatus('syncing')
-        try {
-          const remote = await loadFromGist()
-          setReceipts(remote.length > 0 ? remote : (() => {
-            const s = seedData()
-            return s
-          })())
-          setSyncStatus('synced')
-        } catch (e) {
-          setSyncStatus('error')
-          setSyncError(e.message)
-          // Fall back to localStorage
+      // Always try to load from Worker/Gist first
+      setSyncStatus('syncing')
+      try {
+        const remote = await loadFromGist()
+        if (remote.length > 0) {
+          setReceipts(remote)
+          localStorage.setItem(LOCAL_KEY, JSON.stringify(remote))
+        } else {
+          // Gist is empty — check localStorage
           const raw = localStorage.getItem(LOCAL_KEY)
-          if (raw) setReceipts(JSON.parse(raw))
-          else { const s=seedData(); setReceipts(s) }
+          setReceipts(raw ? JSON.parse(raw) : [])
         }
-      } else {
-        // localStorage only mode
+        setSyncStatus('synced')
+      } catch (e) {
+        setSyncStatus('error')
+        setSyncError(e.message)
+        // Fall back to localStorage
         try {
           const raw = localStorage.getItem(LOCAL_KEY)
-          if (raw) setReceipts(JSON.parse(raw))
-          else { const s=seedData(); setReceipts(s); localStorage.setItem(LOCAL_KEY,JSON.stringify(s)) }
+          setReceipts(raw ? JSON.parse(raw) : [])
         } catch { setReceipts([]) }
       }
     }
     init()
-  }, [gistConnected])
+  }, [])
 
   // ── Auto-save: local + debounced Gist ──────────────────────
   useEffect(() => {
@@ -214,11 +184,13 @@ export default function App() {
     { id:'dashboard', label:'Dashboard',    icon:LayoutDashboard },
     { id:'receipts',  label:'Transactions', icon:Receipt },
     { id:'onedrive',  label:'OneDrive',     icon:CloudIcon },
+    { id:'settings',  label:'Settings',     icon:Settings  },
   ]
   const pageTitle = {
     dashboard:'📊 Dashboard Overview',
     receipts: '🧾 All Transactions',
-    onedrive: '☁️ OneDrive Receipts',
+    onedrive:  '☁️ OneDrive Receipts',
+    settings:  '⚙️ Settings',
   }
 
   // ── Sync status badge ─────────────────────────────────────────
@@ -330,12 +302,7 @@ export default function App() {
                 <div style={{ fontSize:11, color:'var(--text-dim)', marginBottom:6, lineHeight:1.4 }}>
                   Data only in browser.<br/>Connect GitHub to save permanently.
                 </div>
-                <button onClick={()=>setShowGistSetup(true)}
-                  style={{ display:'flex', alignItems:'center', gap:5, width:'100%', justifyContent:'center',
-                    background:'#24292e', border:'1px solid #444', color:'#fff',
-                    borderRadius:6, padding:'6px 8px', cursor:'pointer', fontFamily:'Sora', fontSize:11, fontWeight:700 }}>
-                  <Github size={11}/> Connect GitHub
-                </button>
+<div style={{fontSize:11,color:'var(--text-muted)'}}>Go to ⚙️ Settings to check status</div>
               </div>
             )}
           </div>
@@ -368,7 +335,7 @@ export default function App() {
           </button>
           <h1 style={{ fontSize:14, fontWeight:600, color:'var(--text-primary)', flex:1 }}>{pageTitle[tab]}</h1>
           <SyncBadge/>
-          {tab !== 'onedrive' && (
+          {tab !== 'onedrive' && tab !== 'settings' && (
             <button onClick={()=>{ setEditItem(null); setShowModal(true) }}
               style={{ display:'flex', alignItems:'center', gap:5,
                 background:'var(--accent)', color:'#000', border:'none', borderRadius:7,
@@ -391,6 +358,13 @@ export default function App() {
               filterMonth={filterMonth} setFilterMonth={setFilterMonth}
               filterCategory={filterCategory} setFilterCategory={setFilterCategory}
               onEdit={r=>{ setEditItem(r); setShowModal(true) }} onDelete={deleteReceipt}/>
+          )}
+          {tab==='settings' && (
+            <SettingsPanel onGistConnected={({ user, gistId }) => {
+              setGistConnected(true)
+              setGhUser(user)
+              showToast(`Connected to GitHub as @${user.login} ✓`)
+            }}/>
           )}
           {tab==='onedrive' && (
             <div style={{ maxWidth:680 }}>
@@ -420,11 +394,7 @@ export default function App() {
             setShowModal(false); setEditItem(null)
           }}/>
       )}
-      {showGistSetup && (
-        <GistSetupModal
-          onClose={()=>setShowGistSetup(false)}
-          onConnected={handleGistConnected}/>
-      )}
+
 
       {/* Toast */}
       {toast && (

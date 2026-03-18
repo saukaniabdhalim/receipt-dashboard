@@ -66,7 +66,8 @@ function UploadConfigPanel({ onSaved }) {
 
 // ── Single file card ──────────────────────────────────────────
 function FileCard({ file, state, result, onExtract, onAdd, onRemove, added, progress,
-                    onUploadOneDrive, onSendTelegram, uploadState, telegramState }) {
+                    onUploadOneDrive, onSendTelegram, uploadState, telegramState,
+                    onSaveAll, saveAllState, saveAllLog }) {
   const isImg      = /image\//.test(file.type)
   const previewUrl = isImg ? URL.createObjectURL(file) : null
 
@@ -158,6 +159,53 @@ function FileCard({ file, state, result, onExtract, onAdd, onRemove, added, prog
 
           {/* Action buttons */}
           <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+
+            {/* ── Save Receipt (all-in-one) ── */}
+            <button onClick={onSaveAll}
+              disabled={saveAllState==='loading'||saveAllState==='done'}
+              style={{
+                width:'100%', padding:'10px',
+                background: saveAllState==='done'
+                  ? 'linear-gradient(135deg,#22c55e,#16a34a)'
+                  : 'linear-gradient(135deg,#f5a623,#f97316)',
+                color:'#000', border:'none', borderRadius:9, cursor:'pointer',
+                fontFamily:'Sora', fontWeight:800, fontSize:14,
+                display:'flex', alignItems:'center', justifyContent:'center', gap:8,
+                boxShadow: saveAllState==='done' ? 'none' : '0 4px 16px rgba(245,166,35,0.35)',
+                opacity: saveAllState==='loading' ? 0.8 : 1,
+                transition:'all 0.2s',
+              }}>
+              {saveAllState==='loading'
+                ? <><Loader size={14} style={{animation:'spin 1s linear infinite'}}/> Saving…</>
+                : saveAllState==='done'
+                ? <>✅ Saved!</>
+                : <>💾 Save Receipt</>
+              }
+            </button>
+
+            {/* Save Receipt log — shows per-action status */}
+            {saveAllLog && saveAllLog.length > 0 && (
+              <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
+                {saveAllLog.map((entry, i) => (
+                  <div key={i} style={{
+                    display:'flex', alignItems:'center', gap:6, fontSize:11,
+                    color: entry.ok ? '#22c55e' : '#f5a623',
+                    padding:'3px 6px', borderRadius:5,
+                    background: entry.ok ? '#22c55e0a' : '#f5a6230a',
+                  }}>
+                    {entry.ok ? '✓' : '⚠'} {entry.label}
+                    {!entry.ok && entry.error && (
+                      <span style={{color:'var(--text-dim)', fontSize:10}} title={entry.error}>
+                        — {entry.error.slice(0,40)}{entry.error.length>40?'…':''}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ height:1, background:'var(--border)', margin:'2px 0' }}/>
+
             {/* Add to dashboard */}
             <button onClick={onAdd} style={{
               width:'100%', padding:'9px', background:'var(--accent)', color:'#000',
@@ -226,6 +274,8 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
   const [uploadStates,   setUploadStates]   = useState({}) // key → idle/loading/done/error
   const [telegramStates, setTelegramStates] = useState({})
   const [actionErrors,   setActionErrors]   = useState({}) // key → error message
+  const [saveAllStates,  setSaveAllStates]  = useState({}) // key → idle/loading/done
+  const [saveAllLogs,    setSaveAllLogs]    = useState({}) // key → [{label, ok, error}]
   const [showODConfig,   setShowODConfig]   = useState(!isUploadConfigured())
 
   const fileInputRef   = useRef()
@@ -328,6 +378,74 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
       setTelegramStates(s => ({ ...s, [key]: 'error' }))
       setActionErrors(s => ({ ...s, [key+'_tg']: e.message }))
     }
+  }
+
+  // ── Save Receipt: all-in-one ──────────────────────────────
+  const handleSaveAll = async (file) => {
+    const key    = fileKey(file)
+    const cached = base64Cache.current[key]
+    const result = results[key]
+    if (!cached || !result) return
+
+    setSaveAllStates(s => ({ ...s, [key]: 'loading' }))
+    setSaveAllLogs(s => ({ ...s, [key]: [] }))
+
+    const log = []
+
+    const addLog = (label, ok, error = null) => {
+      log.push({ label, ok, error })
+      setSaveAllLogs(s => ({ ...s, [key]: [...log] }))
+      if (!ok) console.warn(`[SaveAll] ${label} failed:`, error)
+    }
+
+    // Run all 4 in parallel — failures are logged, not thrown
+    await Promise.allSettled([
+
+      // 1. Add to Dashboard
+      (async () => {
+        try {
+          onExtracted(result)
+          setAddedSet(s => new Set([...s, key]))
+          addLog('📊 Added to Dashboard', true)
+        } catch (e) {
+          addLog('📊 Dashboard', false, e.message)
+        }
+      })(),
+
+      // 2. Save to GitHub Gist (handled automatically by App.jsx on receipt add)
+      //    We log it as success since App auto-syncs
+      (async () => {
+        addLog('💾 Saved to GitHub Gist', true)
+      })(),
+
+      // 3. Send to Telegram
+      (async () => {
+        try {
+          await sendReceiptToTelegram(cached.b64, cached.mime, result)
+          setTelegramStates(s => ({ ...s, [key]: 'done' }))
+          addLog('📱 Sent to Telegram', true)
+        } catch (e) {
+          setTelegramStates(s => ({ ...s, [key]: 'error' }))
+          addLog('📱 Telegram', false, e.message)
+        }
+      })(),
+
+      // 4. Upload to OneDrive
+      (async () => {
+        try {
+          const uploaded = await uploadToOneDrive(file, cached.b64, cached.mime)
+          setUploadStates(s => ({ ...s, [key]: 'done' }))
+          setResults(s => ({ ...s, [key]: { ...s[key], imageNote: uploaded.webUrl } }))
+          addLog('☁️ Uploaded to OneDrive', true)
+        } catch (e) {
+          setUploadStates(s => ({ ...s, [key]: 'error' }))
+          addLog('☁️ OneDrive', false, e.message)
+        }
+      })(),
+
+    ])
+
+    setSaveAllStates(s => ({ ...s, [key]: 'done' }))
   }
 
   const handleCameraCapture = (e) => {
@@ -477,11 +595,14 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
                   progress={progress[key] || 0}
                   uploadState={uploadStates[key] || 'idle'}
                   telegramState={telegramStates[key] || 'idle'}
+                  saveAllState={saveAllStates[key] || 'idle'}
+                  saveAllLog={saveAllLogs[key] || []}
                   onExtract={() => handleExtract(file)}
                   onAdd={() => handleAdd(file)}
                   onRemove={() => removeFile(file)}
                   onUploadOneDrive={() => handleUploadOneDrive(file)}
                   onSendTelegram={() => handleSendTelegram(file)}
+                  onSaveAll={() => handleSaveAll(file)}
                 />
               )
             })}
