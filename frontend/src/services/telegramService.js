@@ -45,10 +45,13 @@ function capitalize(str) {
  * @param {string} mimeType     - e.g. 'image/jpeg'
  * @param {object} receiptData  - extracted receipt fields
  */
-export async function sendReceiptToTelegram(base64Image, mimeType, receiptData) {
+export async function sendReceiptToTelegram(base64Image, mimeType, receiptData, token) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
   const response = await fetch(TELEGRAM_PROXY, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-app-secret': 'RESIT2026DASHBOARD' },
+    headers,
     body: JSON.stringify({
       image:    base64Image,
       mimeType: mimeType,

@@ -5,8 +5,14 @@
 
 const WORKER_URL = 'https://spring-art-d63a.saukanihalim.workers.dev'
 
-export async function loadFromGist() {
-  const res = await fetch(`${WORKER_URL}/gist/load`, { method: 'POST', headers: { 'x-app-secret': 'RESIT2026DASHBOARD' } })
+export async function loadFromGist(token) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  const res = await fetch(`${WORKER_URL}/gist/load`, {
+    method: 'POST',
+    headers
+  })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error(err.error || `Load failed (${res.status})`)
@@ -15,10 +21,13 @@ export async function loadFromGist() {
   return data.receipts || []
 }
 
-export async function saveToGist(receipts) {
+export async function saveToGist(receipts, token) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
   const res = await fetch(`${WORKER_URL}/gist/save`, {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json', 'x-app-secret': 'RESIT2026DASHBOARD' },
+    headers,
     body:    JSON.stringify({ receipts })
   })
   if (!res.ok) {

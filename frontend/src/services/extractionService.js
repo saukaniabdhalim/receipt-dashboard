@@ -68,9 +68,12 @@ export async function compressForUpload(file) {
 }
 
 // ── Claude via Worker ─────────────────────────────────────────
-async function extractWithClaude(compressed, filename) {
+async function extractWithClaude(compressed, filename, token) {
   const mobile = isMobile()
   let response
+
+  const headers = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
 
   if (mobile) {
     // ── Mobile: send as multipart/form-data (bypasses WAF) ──
@@ -81,7 +84,7 @@ async function extractWithClaude(compressed, filename) {
     form.append('filename', filename || 'receipt.jpg')
 
     try {
-      response = await fetch(PROXY_URL, { method: 'POST', body: form })
+      response = await fetch(PROXY_URL, { method: 'POST', body: form, headers })
     } catch (e) { throw new Error(`network:${e.message}`) }
 
   } else {
@@ -90,7 +93,7 @@ async function extractWithClaude(compressed, filename) {
     try {
       response = await fetch(PROXY_URL, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model:      'claude-sonnet-4-20250514',
           max_tokens: 800,
@@ -165,7 +168,7 @@ async function extractWithOCR(file, onProgress) {
 }
 
 // ── Main ──────────────────────────────────────────────────────
-export async function extractReceiptData(base64Data, mimeType, filename = '', file = null, onProgress = null) {
+export async function extractReceiptData(base64Data, mimeType, filename = '', file = null, onProgress = null, token = null) {
   // Always compress first
   let compressed = { base64: base64Data, mimeType, blob: null }
 
@@ -176,7 +179,7 @@ export async function extractReceiptData(base64Data, mimeType, filename = '', fi
   }
 
   try {
-    return await extractWithClaude(compressed, filename)
+    return await extractWithClaude(compressed, filename, token)
   } catch (claudeErr) {
     const msg = claudeErr.message || ''
     console.warn('[Claude] Failed:', msg)

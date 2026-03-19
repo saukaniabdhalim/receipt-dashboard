@@ -1,8 +1,12 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { extractReceiptData, getMimeType, readFileAsBase64 } from '../services/extractionService.js'
 import { sendReceiptToTelegram }   from '../services/telegramService.js'
-import { uploadToOneDrive }        from '../services/oneDriveUploadService.js'
-import { SHARE_URL }               from '../services/oneDriveService.js'
+import {
+  ensureReceiptsFolder,
+  listReceipts,
+  uploadReceipt,
+  getFileDownloadUrl
+} from '../services/oneDriveService.js'
 import {
   Image, FileText, Sparkles, CheckCircle,
   Loader, ExternalLink, X, RefreshCw, Camera, Send, Cloud
@@ -169,7 +173,7 @@ function FileCard({ file, state, result, onExtract, onRemove, progress,
 }
 
 // ── Main panel ────────────────────────────────────────────────
-export default function OneDrivePanel({ onExtracted, onDirectSave, onSelectFile, cameraFile, onCameraFileConsumed }) {
+export default function OneDrivePanel({ onExtracted, onDirectSave, onSelectFile, cameraFile, onCameraFileConsumed, getAccessToken }) {
   const [files,          setFiles]          = useState([])
   const [states,         setStates]         = useState({})
   const [results,        setResults]        = useState({})
@@ -215,8 +219,10 @@ export default function OneDrivePanel({ onExtracted, onDirectSave, onSelectFile,
       const b64      = await readFileAsBase64(file)
       const mimeType = file.type || getMimeType(file.name) || 'image/jpeg'
       base64Cache.current[key] = { b64, mime: mimeType }
+      const token    = await getAccessToken()
       const result   = await extractReceiptData(b64, mimeType, file.name, file,
-        pct => setProgress(s => ({ ...s, [key]: pct }))
+        pct => setProgress(s => ({ ...s, [key]: pct })),
+        token
       )
       base64Cache.current[key] = { b64: result.compressedBase64 || b64, mime: 'image/jpeg' }
       setResults(s => ({ ...s, [key]: result }))
@@ -280,7 +286,8 @@ export default function OneDrivePanel({ onExtracted, onDirectSave, onSelectFile,
       // 3. Telegram
       (async () => {
         try {
-          await sendReceiptToTelegram(cached.b64, cached.mime, result)
+          const token = await getAccessToken()
+          await sendReceiptToTelegram(cached.b64, cached.mime, result, token)
           setTelegramStates(s => ({ ...s, [key]: 'done' }))
           addLog('📱 Telegram', true)
         } catch (e) {
@@ -292,9 +299,12 @@ export default function OneDrivePanel({ onExtracted, onDirectSave, onSelectFile,
       // 4. OneDrive
       (async () => {
         try {
-          const uploaded = await uploadToOneDrive(file, cached.b64, cached.mime)
+          const token = await getAccessToken()
+          await ensureReceiptsFolder(token)
+          const uploaded = await uploadReceipt(file, token)
           setUploadStates(s => ({ ...s, [key]: 'done' }))
-          cached.webUrl = uploaded.webUrl
+          // uploaded['@microsoft.graph.downloadUrl'] or we use getFileDownloadUrl
+          cached.webUrl = uploaded?.webUrl || '' 
           addLog('☁️ OneDrive', true)
         } catch (e) {
           setUploadStates(s => ({ ...s, [key]: 'error' }))
@@ -312,7 +322,9 @@ export default function OneDrivePanel({ onExtracted, onDirectSave, onSelectFile,
     if (!cached) return
     setUploadStates(s => ({ ...s, [key]: 'loading' }))
     try {
-      await uploadToOneDrive(file, cached.b64, cached.mime)
+      const token = await getAccessToken()
+      await ensureReceiptsFolder(token)
+      await uploadReceipt(file, token)
       setUploadStates(s => ({ ...s, [key]: 'done' }))
     } catch (e) { setUploadStates(s => ({ ...s, [key]: 'error' })) }
   }
@@ -322,7 +334,8 @@ export default function OneDrivePanel({ onExtracted, onDirectSave, onSelectFile,
     if (!cached || !result) return
     setTelegramStates(s => ({ ...s, [key]: 'loading' }))
     try {
-      await sendReceiptToTelegram(cached.b64, cached.mime, result)
+      const token = await getAccessToken()
+      await sendReceiptToTelegram(cached.b64, cached.mime, result, token)
       setTelegramStates(s => ({ ...s, [key]: 'done' }))
     } catch (e) { setTelegramStates(s => ({ ...s, [key]: 'error' })) }
   }
@@ -374,10 +387,13 @@ export default function OneDrivePanel({ onExtracted, onDirectSave, onSelectFile,
         <div style={{ fontSize:12, color:'var(--text-muted)' }}>
           ☁️ <strong style={{color:'var(--text-primary)'}}>From OneDrive:</strong> open folder → save image → drop below
         </div>
-        <a href={SHARE_URL} target="_blank" rel="noopener noreferrer"
-          style={{ ...actionBtn('#0078d4'), textDecoration:'none', padding:'6px 12px' }}>
-          <ExternalLink size={12}/> Open Folder
-        </a>
+        <button onClick={async () => {
+             const token = await getAccessToken()
+             window.open('https://onedrive.live.com', '_blank')
+          }}
+          style={{ ...actionBtn('#0078d4'), textDecoration:'none', padding:'6px 12px', background:'none', border:'1px solid #0078d440' }}>
+          <ExternalLink size={12}/> Open OneDrive
+        </button>
       </div>
 
       {/* Drop zone */}

@@ -8,9 +8,10 @@ import SettingsPanel  from './components/SettingsPanel.jsx'
 import {
   LayoutDashboard, Receipt, CloudIcon, Plus, Menu,
   Download, Upload, Trash2, Github, Cloud, CloudOff,
-  RefreshCw, Loader, Settings
+  RefreshCw, Loader, Settings, LogIn, LogOut, User
 } from 'lucide-react'
-import { SHARE_URL } from './services/oneDriveService.js'
+import { useMsal, AuthenticatedTemplate, UnauthenticatedTemplate } from '@azure/msal-react'
+import { loginRequest } from './msalConfig'
 import { loadFromGist, saveToGist } from './services/gistStorage.js'
 
 // ── Local date helpers ───────────────────────────────────────
@@ -58,8 +59,26 @@ export default function App() {
   const saveTimeout = useRef(null)
   const [cameraFile, setCameraFile] = useState(null)
 
+  const { instance, accounts } = useMsal()
+  const account = accounts[0]
+
+  // ── Token acquisition ───────────────────────────────────────
+  const getAccessToken = useCallback(async () => {
+    try {
+      const response = await instance.acquireTokenSilent({
+        ...loginRequest,
+        account: account
+      })
+      return response.accessToken
+    } catch (e) {
+      return null
+    }
+  }, [instance, account])
+
   // ── Init: load data ─────────────────────────────────────────
   useEffect(() => {
+    if (!account) return
+
     const init = async () => {
       // 1. Load from localStorage immediately so UI is never blank
       try {
@@ -73,7 +92,8 @@ export default function App() {
       // 2. Then try to sync from Gist in background
       setSyncStatus('syncing')
       try {
-        const remote = await loadFromGist()
+        const token = await getAccessToken()
+        const remote = await loadFromGist(token)
         if (remote.length > 0) {
           setReceipts(remote)
           localStorage.setItem(LOCAL_KEY, JSON.stringify(remote))
@@ -87,10 +107,11 @@ export default function App() {
       }
     }
     init()
-  }, [])
+  }, [account, getAccessToken])
 
   // ── Auto-save: localStorage immediately + debounced Gist ───
   useEffect(() => {
+    if (!account) return
     // Always save to localStorage regardless of gist status
     if (receipts.length > 0) {
       localStorage.setItem(LOCAL_KEY, JSON.stringify(receipts))
@@ -102,7 +123,8 @@ export default function App() {
       if (receipts.length === 0) return
       setSyncStatus('syncing')
       try {
-        await saveToGist(receipts)
+        const token = await getAccessToken()
+        await saveToGist(receipts, token)
         setSyncStatus('synced')
       } catch (e) {
         setSyncStatus('error')
@@ -110,7 +132,7 @@ export default function App() {
         console.warn('[Gist] Save failed (data safe in localStorage):', e.message)
       }
     }, 1500)
-  }, [receipts])
+  }, [receipts, account, getAccessToken])
 
   // ── Toast helper ────────────────────────────────────────────
   const showToast = useCallback((msg, type='success') => {
@@ -179,7 +201,8 @@ export default function App() {
   const handleManualSync = async () => {
     setSyncStatus('syncing')
     try {
-      await saveToGist(receipts)
+      const token = await getAccessToken()
+      await saveToGist(receipts, token)
       setSyncStatus('synced')
       showToast('Synced to GitHub ✓')
     } catch (e) {
@@ -225,9 +248,14 @@ export default function App() {
     )
   }
 
+  const handleLogin = () => instance.loginRedirect(loginRequest)
+  const handleLogout = () => instance.logoutRedirect()
+
   // ─────────────────────────────────────────────────────────────
   return (
-    <div style={{ display:'flex', minHeight:'100vh' }}>
+    <>
+      <AuthenticatedTemplate>
+        <div style={{ display:'flex', minHeight:'100vh' }}>
       {sidebarOpen && (
         <div onClick={()=>setSidebarOpen(false)}
           style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', zIndex:40, backdropFilter:'blur(2px)' }}/>
@@ -325,7 +353,7 @@ export default function App() {
             <Upload size={12}/> Import JSON
             <input type="file" accept=".json" onChange={importJSON} style={{ display:'none' }}/>
           </label>
-          <button onClick={clearAll}   style={{ ...actionBtnStyle, color:'#ef4444' }}><Trash2 size={12}/> Clear All</button>
+          <button onClick={handleLogout} style={{ ...actionBtnStyle, color:'#ef4444' }}><LogOut size={12}/> Sign Out</button>
         </div>
       </aside>
 
@@ -382,6 +410,7 @@ export default function App() {
                 Claude AI reads each receipt and adds it to your dashboard.
               </p>
               <OneDrivePanel
+                getAccessToken={getAccessToken}
                 cameraFile={cameraFile}
                 onCameraFileConsumed={() => setCameraFile(null)}
                 onExtracted={data => {
@@ -456,6 +485,36 @@ export default function App() {
         @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
       `}</style>
     </div>
+      </AuthenticatedTemplate>
+
+      <UnauthenticatedTemplate>
+        <div style={{
+          height:'100vh', display:'flex', flexDirection:'column',
+          alignItems:'center', justifyContent:'center', gap:24,
+          background:'var(--bg-primary)', padding:20, textAlign:'center'
+        }}>
+          <div style={{ width:80, height:80, borderRadius:20, background:'var(--accent-dim)', border:'1px solid var(--accent)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:40 }}>🧾</div>
+          <div>
+            <h1 style={{ fontSize:28, fontWeight:800, color:'var(--text-primary)', marginBottom:8 }}>Receipt Dashboard</h1>
+            <p style={{ color:'var(--text-muted)', maxWidth:300, fontSize:14, lineHeight:1.6 }}>
+              Securely manage your personal receipts with AI extraction and OneDrive sync.
+            </p>
+          </div>
+          <button onClick={handleLogin}
+            style={{
+              display:'flex', alignItems:'center', gap:10,
+              background:'var(--accent)', color:'#000', border:'none', borderRadius:12,
+              padding:'14px 28px', fontFamily:'Sora', fontWeight:800, fontSize:15,
+              cursor:'pointer', boxShadow:'0 10px 20px rgba(245,166,35,0.2)'
+            }}>
+            <LogIn size={18} strokeWidth={2.5}/> Sign In with Microsoft
+          </button>
+          <div style={{ fontSize:12, color:'var(--text-dim)', marginTop:20 }}>
+            Protected by Microsoft Entra ID
+          </div>
+        </div>
+      </UnauthenticatedTemplate>
+    </>
   )
 }
 
