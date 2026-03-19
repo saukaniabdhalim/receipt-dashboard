@@ -7,6 +7,11 @@ import { format, subMonths, startOfMonth, endOfMonth, parseISO } from 'date-fns'
 
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement)
 
+// Use local date to avoid UTC month mismatch in Malaysia (UTC+8)
+function localYM(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`
+}
+
 function getMonthOptions() {
   const opts = [{ value: 'all', label: 'All Time' }]
   const now = new Date()
@@ -73,7 +78,7 @@ export default function Dashboard({ receipts, filterMonth, setFilterMonth, filte
     const months = []
     for (let i = 5; i >= 0; i--) {
       const d = subMonths(new Date(), i)
-      const key = format(d, 'yyyy-MM')
+      const key = localYM(d)
       const label = format(d, 'MMM')
       const total = receipts.filter(r => r.date?.startsWith(key)).reduce((s,r) => s + Number(r.amount||0), 0)
       months.push({ label, total })
@@ -119,8 +124,8 @@ export default function Dashboard({ receipts, filterMonth, setFilterMonth, filte
   }
 
   const avgPerTx = filtered.length ? total / filtered.length : 0
-  const thisMonthKey = (() => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` })()
-  const lastMonthKey = format(subMonths(new Date(), 1), 'yyyy-MM')
+  const thisMonthKey = localYM()
+  const lastMonthKey = localYM(subMonths(new Date(), 1))
   const thisMonthTotal = receipts.filter(r => r.date?.startsWith(thisMonthKey)).reduce((s,r) => s+Number(r.amount||0), 0)
   const lastMonthTotal = receipts.filter(r => r.date?.startsWith(lastMonthKey)).reduce((s,r) => s+Number(r.amount||0), 0)
   const trend = lastMonthTotal > 0 ? ((thisMonthTotal - lastMonthTotal) / lastMonthTotal * 100) : 0

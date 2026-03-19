@@ -1,38 +1,25 @@
-// ─────────────────────────────────────────────────────────────
-// OneDrive Upload Service
-// Azure Client ID fetched from Cloudflare Worker /config
-// No client-side secrets needed
-// ─────────────────────────────────────────────────────────────
-
 import { PublicClientApplication } from '@azure/msal-browser'
 
 const WORKER_URL    = 'https://spring-art-d63a.saukanihalim.workers.dev'
 const UPLOAD_FOLDER = 'receipts'
 const GRAPH_BASE    = 'https://graph.microsoft.com/v1.0'
 const SCOPES        = ['Files.ReadWrite', 'User.Read']
+const isMobile      = () => /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)
 
-let _msalApp   = null
-let _clientId  = null
+let _app = null
 
-// Fetch client ID from worker /config
-async function fetchClientId() {
+async function getApp() {
+  if (_app) return _app
+
+  // Get client ID from worker config
+  let clientId = ''
   try {
     const res  = await fetch(`${WORKER_URL}/config`)
     const data = await res.json()
-    return data.azureClientId || ''
-  } catch {
-    return ''
-  }
-}
+    clientId   = data.azureClientId || ''
+  } catch {}
 
-async function getMsalApp() {
-  const clientId = await fetchClientId()
   if (!clientId) throw new Error('AZURE_CLIENT_ID not set in Cloudflare Worker secrets')
-
-  if (_msalApp && _clientId === clientId) return _msalApp
-
-  _msalApp  = null
-  _clientId = clientId
 
   const app = new PublicClientApplication({
     auth: {
@@ -45,94 +32,82 @@ async function getMsalApp() {
       cacheLocation:          'localStorage',
       storeAuthStateInCookie: true,
     },
-    system: {
-      allowNativeBroker: false,
-      asyncPopups:       false,
-    }
+    system: { allowNativeBroker: false }
   })
 
   await app.initialize()
 
+  // Always handle redirect promise on init
   try {
     await app.handleRedirectPromise()
   } catch (e) {
     console.warn('[MSAL] handleRedirectPromise:', e.message)
   }
 
-  _msalApp = app
+  _app = app
   return app
 }
 
-export async function isUploadConfigured() {
-  const cid = await fetchClientId()
-  return !!cid
-}
-
-// Keep sync version for UI checks
-export function isUploadConfiguredSync() {
-  return !!_clientId
-}
-
 async function getToken() {
-  const app      = await getMsalApp()
+  const app      = await getApp()
   const accounts = app.getAllAccounts()
 
+  // Silent first (already logged in)
   if (accounts.length > 0) {
     try {
-      const result = await app.acquireTokenSilent({ scopes: SCOPES, account: accounts[0] })
-      return result.accessToken
+      const r = await app.acquireTokenSilent({ scopes: SCOPES, account: accounts[0] })
+      return r.accessToken
     } catch (e) {
       console.warn('[MSAL] Silent failed:', e.message)
     }
   }
 
-  // Mobile browsers often block popups — use redirect on mobile
-  const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)
-
-  if (isMobile) {
-    // Store intent and redirect — on return, acquireTokenSilent will work
-    try {
-      await app.loginRedirect({ scopes: SCOPES, prompt: 'select_account' })
-      // loginRedirect navigates away — code below won't run
-      return ''
-    } catch (e) {
-      console.warn('[MSAL] Redirect failed, trying popup:', e.message)
-    }
+  // Mobile: use redirect (popup blocked by mobile browsers)
+  // Desktop: use popup
+  if (isMobile()) {
+    // Save current scroll position and redirect
+    await app.loginRedirect({ scopes: SCOPES })
+    // Code below never runs — page redirects away
+    return ''
   }
 
+  // Desktop popup
   try {
-    const result = await app.loginPopup({ scopes: SCOPES, prompt: 'select_account' })
-    return result.accessToken
-  } catch (popupErr) {
-    const code = popupErr.errorCode || ''
-    const msg  = popupErr.message  || ''
+    const r = await app.loginPopup({ scopes: SCOPES })
+    return r.accessToken
+  } catch (e) {
+    const code = e.errorCode || ''
+    const msg  = e.message   || ''
 
+    // user_cancelled can fire after successful redirect close
     if (code === 'user_cancelled' || msg.includes('user_cancelled')) {
-      await new Promise(r => setTimeout(r, 500))
+      await new Promise(r => setTimeout(r, 600))
       const fresh = app.getAllAccounts()
       if (fresh.length > 0) {
         try {
-          const result = await app.acquireTokenSilent({ scopes: SCOPES, account: fresh[0] })
-          return result.accessToken
+          const r = await app.acquireTokenSilent({ scopes: SCOPES, account: fresh[0] })
+          return r.accessToken
         } catch {}
         try {
-          const result = await app.acquireTokenPopup({ scopes: SCOPES, account: fresh[0] })
-          return result.accessToken
+          const r = await app.acquireTokenPopup({ scopes: SCOPES, account: fresh[0] })
+          return r.accessToken
         } catch {}
       }
-      throw new Error('Sign-in popup closed — please try again')
+      throw new Error('Sign-in cancelled — please try again')
     }
 
-    if (code === 'popup_window_error' || msg.includes('popup_window_error')) {
-      throw new Error('Popup blocked — allow popups for this site and try again')
+    if (code === 'popup_window_error' || msg.includes('popup')) {
+      throw new Error('Popup blocked — allow popups for this site')
     }
 
-    throw new Error(`Microsoft sign-in failed: ${msg.slice(0, 100)}`)
+    throw new Error(`Sign-in failed: ${msg.slice(0,80)}`)
   }
 }
 
 export async function uploadToOneDrive(file, base64Data, mimeType) {
   const token    = await getToken()
+  if (!token) throw new Error('No token — please sign in again')
+
   const datePart = new Date().toISOString().slice(0, 10)
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
   const filename = `${datePart}_${safeName}`
@@ -157,14 +132,14 @@ export async function uploadToOneDrive(file, base64Data, mimeType) {
   return { webUrl: data.webUrl, name: data.name, id: data.id }
 }
 
-export async function signOutOneDrive() {
-  if (!_msalApp) return
-  try {
-    const accounts = _msalApp.getAllAccounts()
-    if (accounts.length > 0) await _msalApp.logoutPopup({ account: accounts[0] })
-  } catch (e) { console.warn('[MSAL] Logout:', e.message) }
-}
+export function isUploadConfigured() { return true }
+export function getClientId()        { return '' }
+export function saveClientId()       {}
 
-// Backward compat stubs
-export function getClientId()    { return _clientId || '' }
-export function saveClientId()   {}
+export async function signOutOneDrive() {
+  if (!_app) return
+  try {
+    const accounts = _app.getAllAccounts()
+    if (accounts.length > 0) await _app.logoutPopup({ account: accounts[0] })
+  } catch {}
+}

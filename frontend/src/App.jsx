@@ -385,12 +385,12 @@ export default function App() {
                 cameraFile={cameraFile}
                 onCameraFileConsumed={() => setCameraFile(null)}
                 onExtracted={data => {
-                  // Pre-fill modal with all extracted fields
+                  // Opens modal pre-filled for review
                   setEditItem({
                     id:          undefined,
                     date:        data.date        || localDateStr(),
                     merchant:    data.merchant    || '',
-                    amount:      data.amount      || '',
+                    amount:      data.amount      ? String(data.amount) : '',
                     category:    data.category    || 'others',
                     description: data.description || '',
                     currency:    data.currency    || 'MYR',
@@ -398,6 +398,18 @@ export default function App() {
                   })
                   setShowModal(true)
                   showToast('✅ Receipt extracted — review & save')
+                }}
+                onDirectSave={data => {
+                  // Called by Save Receipt button — saves directly, no modal
+                  addReceipt({
+                    date:        data.date        || localDateStr(),
+                    merchant:    data.merchant    || 'Unknown',
+                    amount:      Number(data.amount) || 0,
+                    category:    data.category    || 'others',
+                    description: data.description || '',
+                    currency:    data.currency    || 'MYR',
+                    imageNote:   data.imageNote   || '',
+                  })
                 }}/>
             </div>
           )}

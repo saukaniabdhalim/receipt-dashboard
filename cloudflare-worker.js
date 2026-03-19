@@ -17,7 +17,7 @@
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, x-app-secret',
+  'Access-Control-Allow-Headers': 'Content-Type, x-app-secret, Origin, Accept, User-Agent, X-Requested-With',
   'Access-Control-Max-Age':       '86400',
 }
 
@@ -69,7 +69,7 @@ async function handleClaude(request, env) {
     return json({ error: { message: 'ANTHROPIC_API_KEY not set' } }, 500)
   }
 
-  const contentType = request.headers.get('content-type') || ''
+  const contentType = (request.headers.get('content-type') || '').toLowerCase()
   let imageBase64, imageMime, filename
 
   if (contentType.includes('multipart/form-data')) {

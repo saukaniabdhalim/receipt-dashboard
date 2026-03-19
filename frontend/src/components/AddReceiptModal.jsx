@@ -33,6 +33,21 @@ export default function AddReceiptModal({ item, onClose, onSave }) {
     onSave({ ...form, amount: Number(form.amount), id: item?.id })
   }
 
+  const handleExtracted = (data) => {
+    setForm(prev => ({
+      ...prev,
+      date:        data.date        || prev.date,
+      merchant:    data.merchant    || prev.merchant,
+      amount:      (data.amount !== undefined && data.amount !== null) ? String(data.amount) : prev.amount,
+      category:    data.category    || prev.category,
+      description: data.description || prev.description,
+      imageNote:   data.imageNote   || prev.imageNote,
+    }))
+    if (data.imageNote) {
+      set('imageNote', data.imageNote)
+    }
+  }
+
   const handleSelectFile = (file) => {
     // Use webUrl as the reference, fallback to name
     const ref = file.webUrl || file['@microsoft.graph.downloadUrl'] || file.name
@@ -42,7 +57,9 @@ export default function AddReceiptModal({ item, onClose, onSave }) {
       const name = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ')
       set('merchant', name)
     }
-    setShowOneDrive(false)
+    // Note: extraction panel in modal will now also call handleExtracted
+    // so we don't necessarily need to close it here if they want to review
+    // setShowOneDrive(false)
   }
 
   return (
@@ -159,7 +176,7 @@ export default function AddReceiptModal({ item, onClose, onSave }) {
             {/* Inline OneDrive Panel */}
             {showOneDrive && (
               <div style={{ marginBottom: 10, animation: 'fadeUp 0.2s ease' }}>
-                <OneDrivePanel onSelectFile={handleSelectFile} compact={true} />
+                <OneDrivePanel onSelectFile={handleSelectFile} onExtracted={handleExtracted} compact={true} />
               </div>
             )}
 

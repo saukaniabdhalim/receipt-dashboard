@@ -115,8 +115,11 @@ Return ONLY JSON.`,
   console.log('[Claude] status:', response.status, '| preview:', rawText.slice(0,150))
 
   if (!response.ok) {
-    let msg = `Proxy error ${response.status}`
-    try { msg = JSON.parse(rawText)?.error?.message || msg } catch {}
+    let msg = `Proxy error ${response.status}: ${response.statusText || 'Not allowed'}`
+    try { 
+      const parsed = JSON.parse(rawText)
+      msg = parsed.error?.message || parsed.error || msg 
+    } catch {}
     throw new Error(msg)
   }
 

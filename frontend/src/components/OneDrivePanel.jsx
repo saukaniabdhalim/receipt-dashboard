@@ -169,7 +169,7 @@ function FileCard({ file, state, result, onExtract, onRemove, progress,
 }
 
 // ── Main panel ────────────────────────────────────────────────
-export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileConsumed }) {
+export default function OneDrivePanel({ onExtracted, onDirectSave, onSelectFile, cameraFile, onCameraFileConsumed }) {
   const [files,          setFiles]          = useState([])
   const [states,         setStates]         = useState({})
   const [results,        setResults]        = useState({})
@@ -221,6 +221,11 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
       base64Cache.current[key] = { b64: result.compressedBase64 || b64, mime: 'image/jpeg' }
       setResults(s => ({ ...s, [key]: result }))
       setStates( s => ({ ...s, [key]: 'done' }))
+      
+      // Auto-trigger fill if inside a modal (onExtracted provided, but not onDirectSave)
+      if (typeof onExtracted === 'function' && typeof onDirectSave !== 'function') {
+        onExtracted({ ...result, imageNote: result.webUrl || '' })
+      }
     } catch (e) {
       setStates( s => ({ ...s, [key]: 'error' }))
       setResults(s => ({ ...s, [key]: { error: String(e.message || e) } }))
@@ -251,13 +256,22 @@ export default function OneDrivePanel({ onExtracted, cameraFile, onCameraFileCon
     }
 
     await Promise.allSettled([
-      // 1. Add to dashboard (calls onExtracted which opens pre-filled modal)
+      // 1. Add to dashboard directly (no modal)
       (async () => {
         try {
-          onExtracted({ ...result, imageNote: cached.webUrl || '' })
+          const payload = { ...result, imageNote: cached.webUrl || '' };
+          if (typeof onDirectSave === 'function') {
+            onDirectSave(payload)
+          } else if (typeof onExtracted === 'function') {
+            onExtracted(payload)
+          }
+          
+          if (typeof onSelectFile === 'function') {
+            onSelectFile({ ...file, webUrl: cached.webUrl })
+          }
           setAddedSet(s => new Set([...s, key]))
           addLog('📊 Added to Dashboard', true)
-        } catch (e) { addLog('📊 Dashboard', false, e.message) }
+        } catch (e) { addLog('📊 Dashboard', false, String(e.message || e)) }
       })(),
 
       // 2. Gist auto-saves via App.jsx useEffect — log as success
