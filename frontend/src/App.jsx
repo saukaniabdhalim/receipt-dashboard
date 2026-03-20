@@ -64,6 +64,7 @@ export default function App() {
 
   // ── Token acquisition ───────────────────────────────────────
   const getAccessToken = useCallback(async () => {
+    if (!account) return null
     try {
       const response = await instance.acquireTokenSilent({
         ...loginRequest,
@@ -71,7 +72,15 @@ export default function App() {
       })
       return response.accessToken
     } catch (e) {
-      return null
+      try {
+        const response = await instance.acquireTokenPopup({
+          ...loginRequest,
+          account: account
+        })
+        return response.accessToken
+      } catch {
+        return null
+      }
     }
   }, [instance, account])
 

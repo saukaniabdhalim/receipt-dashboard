@@ -1,6 +1,8 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { extractReceiptData, getMimeType, readFileAsBase64 } from '../services/extractionService.js'
 import { sendReceiptToTelegram }   from '../services/telegramService.js'
+import { useMsal } from '@azure/msal-react'
+import { loginRequest } from '../msalConfig.js'
 import {
   ensureReceiptsFolder,
   listReceipts,
@@ -189,6 +191,22 @@ export default function OneDrivePanel({ onExtracted, onDirectSave, onSelectFile,
   const cameraInputRef = useRef()
   const base64Cache    = useRef({})
   const isMobile = typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)
+  const { instance, accounts } = useMsal()
+  const account = accounts[0]
+
+  const getAuthToken = useCallback(async () => {
+    if (typeof getAccessToken === 'function') return await getAccessToken()
+    if (!account) return null
+    try {
+      const response = await instance.acquireTokenSilent({
+        ...loginRequest,
+        account,
+      })
+      return response.accessToken
+    } catch {
+      return null
+    }
+  }, [getAccessToken, instance, account])
 
   const addFiles = useCallback((incoming) => {
     const valid = Array.from(incoming)
@@ -219,7 +237,8 @@ export default function OneDrivePanel({ onExtracted, onDirectSave, onSelectFile,
       const b64      = await readFileAsBase64(file)
       const mimeType = file.type || getMimeType(file.name) || 'image/jpeg'
       base64Cache.current[key] = { b64, mime: mimeType }
-      const token    = await getAccessToken()
+      const token    = await getAuthToken()
+      if (!token) throw new Error('Sign-in required. Please sign in again and retry.')
       const result   = await extractReceiptData(b64, mimeType, file.name, file,
         pct => setProgress(s => ({ ...s, [key]: pct })),
         token
@@ -286,7 +305,8 @@ export default function OneDrivePanel({ onExtracted, onDirectSave, onSelectFile,
       // 3. Telegram
       (async () => {
         try {
-          const token = await getAccessToken()
+          const token = await getAuthToken()
+          if (!token) throw new Error('Missing auth token')
           await sendReceiptToTelegram(cached.b64, cached.mime, result, token)
           setTelegramStates(s => ({ ...s, [key]: 'done' }))
           addLog('📱 Telegram', true)
@@ -299,7 +319,8 @@ export default function OneDrivePanel({ onExtracted, onDirectSave, onSelectFile,
       // 4. OneDrive
       (async () => {
         try {
-          const token = await getAccessToken()
+          const token = await getAuthToken()
+          if (!token) throw new Error('Missing auth token')
           await ensureReceiptsFolder(token)
           const uploaded = await uploadReceipt(file, token)
           setUploadStates(s => ({ ...s, [key]: 'done' }))
@@ -322,7 +343,8 @@ export default function OneDrivePanel({ onExtracted, onDirectSave, onSelectFile,
     if (!cached) return
     setUploadStates(s => ({ ...s, [key]: 'loading' }))
     try {
-      const token = await getAccessToken()
+      const token = await getAuthToken()
+      if (!token) throw new Error('Missing auth token')
       await ensureReceiptsFolder(token)
       await uploadReceipt(file, token)
       setUploadStates(s => ({ ...s, [key]: 'done' }))
@@ -334,7 +356,8 @@ export default function OneDrivePanel({ onExtracted, onDirectSave, onSelectFile,
     if (!cached || !result) return
     setTelegramStates(s => ({ ...s, [key]: 'loading' }))
     try {
-      const token = await getAccessToken()
+      const token = await getAuthToken()
+      if (!token) throw new Error('Missing auth token')
       await sendReceiptToTelegram(cached.b64, cached.mime, result, token)
       setTelegramStates(s => ({ ...s, [key]: 'done' }))
     } catch (e) { setTelegramStates(s => ({ ...s, [key]: 'error' })) }
@@ -388,7 +411,7 @@ export default function OneDrivePanel({ onExtracted, onDirectSave, onSelectFile,
           ☁️ <strong style={{color:'var(--text-primary)'}}>From OneDrive:</strong> open folder → save image → drop below
         </div>
         <button onClick={async () => {
-             const token = await getAccessToken()
+             await getAuthToken()
              window.open('https://onedrive.live.com', '_blank')
           }}
           style={{ ...actionBtn('#0078d4'), textDecoration:'none', padding:'6px 12px', background:'none', border:'1px solid #0078d440' }}>

@@ -24,6 +24,13 @@ const CORS = {
 
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages'
 const GIST_FILENAME = 'resit-dashboard-data.json'
+const GRAPH_AUDIENCE = '00000003-0000-0000-c000-000000000000'
+
+function decodeBase64Url(segment) {
+  const normalized = segment.replace(/-/g, '+').replace(/_/g, '/')
+  const padLength = (4 - (normalized.length % 4)) % 4
+  return atob(normalized + '='.repeat(padLength))
+}
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -43,14 +50,29 @@ async function verifyToken(request, env) {
 
   try {
     // 1. Decode payload & header
-    const header  = JSON.parse(atob(parts[0]))
-    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')))
+    const payload = JSON.parse(decodeBase64Url(parts[1]))
 
-    // 2. Simple checks (aud, exp)
-    if (payload.aud !== env.AZURE_CLIENT_ID) return false
-    if (payload.exp * 1000 < Date.now())     return false
+    // 2. Basic checks (exp, nbf)
+    const now = Date.now()
+    if (!payload.exp || payload.exp * 1000 < now) return false
+    if (payload.nbf && payload.nbf * 1000 > now) return false
 
-    // 3. Signature verification (Optional but recommended for strict security)
+    // 3. Audience + caller checks
+    // We accept:
+    // - tokens minted for this app (aud == AZURE_CLIENT_ID), or
+    // - Graph tokens (aud == GRAPH_AUDIENCE) issued to this client app (azp/appid == AZURE_CLIENT_ID)
+    const aud = payload.aud
+    const clientId = env.AZURE_CLIENT_ID
+    if (!clientId || !aud) return false
+
+    if (aud !== clientId && aud !== GRAPH_AUDIENCE) return false
+
+    if (aud === GRAPH_AUDIENCE) {
+      const callerAppId = payload.azp || payload.appid
+      if (callerAppId !== clientId) return false
+    }
+
+    // 4. Signature verification (Optional but recommended for strict security)
     // For this dashboard, we trust the aud/exp/iss checks + the fact it's HTTPS
     // but if you want true crypto verification, we'd fetch JWKS here.
     // For now, we'll enforce the AZURE_CLIENT_ID check as the primary guard.
