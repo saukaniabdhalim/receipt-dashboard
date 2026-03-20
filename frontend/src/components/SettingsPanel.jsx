@@ -34,7 +34,7 @@ export default function SettingsPanel() {
       icon: Cloud,
       label: 'OneDrive Upload',
       description: 'Receipt images uploaded to your OneDrive /receipts folder',
-      secret: 'AZURE_CLIENT_ID',
+      secret: 'AZURE_CLIENT_ID + AZURE_TENANT_ID',
       ok: !!config.azureClientId,
     },
     {

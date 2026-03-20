@@ -12,6 +12,7 @@
 //   GITHUB_TOKEN
 //   GITHUB_GIST_ID
 //   AZURE_CLIENT_ID
+//   AZURE_TENANT_ID
 // ─────────────────────────────────────────────────────────────
 
 const CORS = {
@@ -85,6 +86,7 @@ export default {
     if (request.method === 'GET' && pathname === '/config') {
       return json({
         azureClientId:       env.AZURE_CLIENT_ID      || '',
+        azureTenantId:       env.AZURE_TENANT_ID      || '',
         gistConfigured:      !!(env.GITHUB_TOKEN && env.GITHUB_GIST_ID),
         telegramConfigured:  !!(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID),
         anthropicConfigured: !!env.ANTHROPIC_API_KEY,
