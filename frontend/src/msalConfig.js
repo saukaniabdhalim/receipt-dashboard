@@ -11,6 +11,22 @@ function pickFirst(...values) {
   return ''
 }
 
+function normalizeBasePath(basePath) {
+  const path = typeof basePath === 'string' && basePath.trim() ? basePath.trim() : '/'
+  const withLeadingSlash = path.startsWith('/') ? path : `/${path}`
+  return withLeadingSlash.endsWith('/') ? withLeadingSlash : `${withLeadingSlash}/`
+}
+
+function resolveRedirectUri() {
+  if (typeof window === 'undefined') return '/'
+
+  const explicitRedirect = pickFirst(import.meta.env.VITE_AZURE_REDIRECT_URI)
+  if (explicitRedirect) return explicitRedirect
+
+  const basePath = normalizeBasePath(import.meta.env.VITE_BASE_PATH || '/')
+  return new URL(basePath, window.location.origin).toString()
+}
+
 export function resolveMsalAuthConfig(workerConfig = {}) {
   const clientId = pickFirst(
     workerConfig.azureClientId,
@@ -29,13 +45,14 @@ export function resolveMsalAuthConfig(workerConfig = {}) {
 
 export function createMsalConfig(authConfig = {}) {
   const { clientId = 'YOUR_CLIENT_ID_HERE', tenantId = 'common' } = authConfig
+  const redirectUri = resolveRedirectUri()
 
   return {
     auth: {
       clientId,
       authority: `https://login.microsoftonline.com/${tenantId}`,
-      redirectUri: typeof window !== 'undefined' ? window.location.origin : '/',
-      postLogoutRedirectUri: typeof window !== 'undefined' ? window.location.origin : '/',
+      redirectUri,
+      postLogoutRedirectUri: redirectUri,
       navigateToLoginRequestUrl: true,
     },
     cache: {
