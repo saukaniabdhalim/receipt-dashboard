@@ -18,7 +18,7 @@
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, x-app-secret, Origin, Accept, User-Agent, X-Requested-With',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, Origin, Accept, User-Agent, X-Requested-With',
   'Access-Control-Max-Age':       '86400',
 }
 
@@ -39,7 +39,33 @@ function json(data, status = 200) {
   })
 }
 
-// ── JWT Verification ──────────────────────────────────────────
+// ── JWKS cache (module-level, survives warm Worker instances) ──
+let _jwksCache = null
+let _jwksCacheTime = 0
+const JWKS_TTL_MS = 60 * 60 * 1000 // 1 hour
+
+async function getJwks(tenantId = 'common') {
+  const now = Date.now()
+  if (_jwksCache && (now - _jwksCacheTime) < JWKS_TTL_MS) return _jwksCache
+
+  const url = `https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`JWKS fetch failed: ${res.status}`)
+
+  _jwksCache = await res.json()
+  _jwksCacheTime = now
+  return _jwksCache
+}
+
+function base64UrlToUint8Array(b64url) {
+  const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/')
+  const binary = atob(b64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
+// ── JWT Verification — full RS256 signature check via JWKS ────
 async function verifyToken(request, env) {
   const auth = request.headers.get('Authorization')
   if (!auth || !auth.startsWith('Bearer ')) return false
@@ -49,39 +75,69 @@ async function verifyToken(request, env) {
   if (parts.length !== 3) return false
 
   try {
-    // 1. Decode payload & header
+    // 1. Decode header + payload
+    const header  = JSON.parse(decodeBase64Url(parts[0]))
     const payload = JSON.parse(decodeBase64Url(parts[1]))
 
-    // 2. Basic checks (exp, nbf)
-    const now = Date.now()
+    if (header.alg !== 'RS256') return false
+
+    // 2. Expiry / not-before checks
+    const now    = Date.now()
     const skewMs = 5 * 60 * 1000
     if (!payload.exp || payload.exp * 1000 < (now - skewMs)) return false
     if (payload.nbf && payload.nbf * 1000 > (now + skewMs)) return false
 
     // 3. Audience + caller checks
-    // We accept:
-    // - tokens minted for this app (aud == AZURE_CLIENT_ID), or
-    // - Graph tokens (aud == GRAPH_AUDIENCE) issued to this client app (azp/appid == AZURE_CLIENT_ID)
-    const aud = payload.aud
+    // Accept tokens issued directly for this app (aud == AZURE_CLIENT_ID)
+    // or Graph-scoped tokens issued by this client app (azp == AZURE_CLIENT_ID)
     const clientId = env.AZURE_CLIENT_ID
-    if (!clientId || !aud) return false
+    if (!clientId) return false
+    const aud = payload.aud
+    if (!aud) return false
 
     if (aud !== clientId && aud !== GRAPH_AUDIENCE) return false
-
     if (aud === GRAPH_AUDIENCE) {
       const callerAppId = payload.azp || payload.appid
       if (callerAppId !== clientId) return false
     }
 
-    // 4. Signature verification (Optional but recommended for strict security)
-    // For this dashboard, we trust the aud/exp/iss checks + the fact it's HTTPS
-    // but if you want true crypto verification, we'd fetch JWKS here.
-    // For now, we'll enforce the AZURE_CLIENT_ID check as the primary guard.
-    
-    return true
+    // 4. RS256 signature verification via Microsoft JWKS
+    const tenantId = env.AZURE_TENANT_ID || 'common'
+    const jwks = await getJwks(tenantId)
+
+    const jwk = jwks.keys?.find(k => k.kid === header.kid && k.use === 'sig')
+    if (!jwk) {
+      // kid mismatch — keys may have rotated, force a fresh fetch
+      _jwksCache = null
+      const freshJwks = await getJwks(tenantId)
+      const freshJwk = freshJwks.keys?.find(k => k.kid === header.kid && k.use === 'sig')
+      if (!freshJwk) return false
+      return await verifyRs256(parts, freshJwk)
+    }
+
+    return await verifyRs256(parts, jwk)
+
   } catch (e) {
+    console.error('[JWT verify]', e.message)
     return false
   }
+}
+
+async function verifyRs256(parts, jwk) {
+  // Import the RSA public key
+  const key = await crypto.subtle.importKey(
+    'jwk',
+    jwk,
+    { name: 'RSASSA-PKCS1-v1_5', hash: { name: 'SHA-256' } },
+    false,
+    ['verify']
+  )
+
+  // Signing input is the raw "header.payload" bytes
+  const signingInput = new TextEncoder().encode(`${parts[0]}.${parts[1]}`)
+  const signature    = base64UrlToUint8Array(parts[2])
+
+  return crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, signature, signingInput)
 }
 
 export default {
@@ -93,15 +149,11 @@ export default {
     const pathname = new URL(request.url).pathname.replace(/\/+$/, '') || '/'
 
     // ── Security Guard ──
-    // Exempt /config (public) and OPTIONS (CORS)
+    // Exempt /config (public) and OPTIONS (CORS preflight)
     if (pathname !== '/config' && request.method !== 'OPTIONS') {
       const isAuth = await verifyToken(request, env)
       if (!isAuth) {
-        // Fallback for transition period: still check x-app-secret
-        const secret = request.headers.get('x-app-secret')
-        if (secret !== 'RESIT2026DASHBOARD') {
-          return json({ error: 'Unauthorized. Please sign in.' }, 401)
-        }
+        return json({ error: 'Unauthorized. Please sign in.' }, 401)
       }
     }
 

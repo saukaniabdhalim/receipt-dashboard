@@ -4,12 +4,10 @@
 // ─────────────────────────────────────────────────────────────
 
 const WORKER_URL = 'https://spring-art-d63a.saukanihalim.workers.dev'
-const APP_SECRET = import.meta.env.VITE_APP_SECRET || 'RESIT2026DASHBOARD'
 
 export async function loadFromGist(token) {
   const headers = {
     'Content-Type': 'application/json',
-    'x-app-secret': APP_SECRET
   }
   if (token) headers['Authorization'] = `Bearer ${token}`
 
@@ -28,7 +26,6 @@ export async function loadFromGist(token) {
 export async function saveToGist(receipts, token) {
   const headers = {
     'Content-Type': 'application/json',
-    'x-app-secret': APP_SECRET
   }
   if (token) headers['Authorization'] = `Bearer ${token}`
 

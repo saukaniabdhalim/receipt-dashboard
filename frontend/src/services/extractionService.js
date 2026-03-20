@@ -1,7 +1,6 @@
 import { extractTextFromImage, parseReceiptText } from './ocrService.js'
 
 const PROXY_URL = 'https://spring-art-d63a.saukanihalim.workers.dev/'
-const APP_SECRET = import.meta.env.VITE_APP_SECRET || 'RESIT2026DASHBOARD'
 
 const CATEGORIES = [
   'food','transport','toll','utilities','shopping',
@@ -73,7 +72,7 @@ async function extractWithClaude(compressed, filename, token) {
   const mobile = isMobile()
   let response
 
-  const headers = { 'x-app-secret': APP_SECRET }
+  const headers = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
 
   if (mobile) {
