@@ -71,7 +71,7 @@ export function createMsalConfig(authConfig = {}) {
 }
 
 export const loginRequest = {
-  scopes: ['User.Read', 'Files.ReadWrite', 'Files.ReadWrite.All'],
+  scopes: ['User.Read', 'Files.ReadWrite'],
 }
 
 export const graphConfig = {

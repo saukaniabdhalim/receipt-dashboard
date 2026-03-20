@@ -54,8 +54,9 @@ async function verifyToken(request, env) {
 
     // 2. Basic checks (exp, nbf)
     const now = Date.now()
-    if (!payload.exp || payload.exp * 1000 < now) return false
-    if (payload.nbf && payload.nbf * 1000 > now) return false
+    const skewMs = 5 * 60 * 1000
+    if (!payload.exp || payload.exp * 1000 < (now - skewMs)) return false
+    if (payload.nbf && payload.nbf * 1000 > (now + skewMs)) return false
 
     // 3. Audience + caller checks
     // We accept:

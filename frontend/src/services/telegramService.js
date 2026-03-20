@@ -5,6 +5,7 @@
 // ─────────────────────────────────────────────────────────────
 
 const TELEGRAM_PROXY = 'https://spring-art-d63a.saukanihalim.workers.dev/telegram'
+const APP_SECRET = import.meta.env.VITE_APP_SECRET || 'RESIT2026DASHBOARD'
 
 /**
  * Build a nicely formatted Telegram caption from receipt data
@@ -46,7 +47,10 @@ function capitalize(str) {
  * @param {object} receiptData  - extracted receipt fields
  */
 export async function sendReceiptToTelegram(base64Image, mimeType, receiptData, token) {
-  const headers = { 'Content-Type': 'application/json' }
+  const headers = {
+    'Content-Type': 'application/json',
+    'x-app-secret': APP_SECRET
+  }
   if (token) headers['Authorization'] = `Bearer ${token}`
 
   const response = await fetch(TELEGRAM_PROXY, {

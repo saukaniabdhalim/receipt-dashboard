@@ -1,6 +1,7 @@
 import { extractTextFromImage, parseReceiptText } from './ocrService.js'
 
 const PROXY_URL = 'https://spring-art-d63a.saukanihalim.workers.dev/'
+const APP_SECRET = import.meta.env.VITE_APP_SECRET || 'RESIT2026DASHBOARD'
 
 const CATEGORIES = [
   'food','transport','toll','utilities','shopping',
@@ -18,8 +19,8 @@ export async function compressForUpload(file) {
   }
 
   const mobile  = isMobile()
-  const maxDim   = mobile ? 600  : 1024
-  const maxBytes = mobile ? 80 * 1024 : 350 * 1024  // 80KB mobile!
+  const maxDim   = mobile ? 900  : 1024
+  const maxBytes = mobile ? 180 * 1024 : 350 * 1024
 
   return new Promise((resolve) => {
     const img = new Image()
@@ -72,7 +73,7 @@ async function extractWithClaude(compressed, filename, token) {
   const mobile = isMobile()
   let response
 
-  const headers = {}
+  const headers = { 'x-app-secret': APP_SECRET }
   if (token) headers['Authorization'] = `Bearer ${token}`
 
   if (mobile) {
@@ -159,7 +160,7 @@ function shouldFallback(msg = '') {
   const m = msg.toLowerCase()
   return m.includes('credit') || m.includes('billing') || m.includes('quota') ||
          m.includes('network') || m.includes('502') || m.includes('503') ||
-         m.includes('empty') || m.includes('no json') || m.includes('overload')
+         m.includes('overload')
 }
 
 async function extractWithOCR(file, onProgress) {
