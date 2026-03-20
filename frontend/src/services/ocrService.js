@@ -8,7 +8,7 @@
 let tesseractLoaded = false
 
 async function loadTesseract() {
-  if (tesseractLoaded || window.Tesseract) { tesseractLoaded = true; return }
+  if (tesseractLoaded || (typeof window !== 'undefined' && window.Tesseract)) { tesseractLoaded = true; return }
   return new Promise((resolve, reject) => {
     const script = document.createElement('script')
     script.src = 'https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.0.4/tesseract.min.js'

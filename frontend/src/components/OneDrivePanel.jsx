@@ -188,7 +188,7 @@ export default function OneDrivePanel({ onExtracted, onDirectSave, onSelectFile,
   const fileInputRef   = useRef()
   const cameraInputRef = useRef()
   const base64Cache    = useRef({})
-  const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)
+  const isMobile = typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)
 
   const addFiles = useCallback((incoming) => {
     const valid = Array.from(incoming)

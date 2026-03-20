@@ -8,8 +8,8 @@ export const msalConfig = {
   auth: {
     clientId: import.meta.env.VITE_AZURE_CLIENT_ID || 'YOUR_CLIENT_ID_HERE',
     authority: `https://login.microsoftonline.com/${import.meta.env.VITE_AZURE_TENANT_ID || 'common'}`,
-    redirectUri: window.location.origin,
-    postLogoutRedirectUri: window.location.origin,
+    redirectUri: typeof window !== 'undefined' ? window.location.origin : '/',
+    postLogoutRedirectUri: typeof window !== 'undefined' ? window.location.origin : '/',
     navigateToLoginRequestUrl: true,
   },
   cache: {

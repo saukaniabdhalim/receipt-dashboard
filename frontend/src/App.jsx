@@ -11,7 +11,7 @@ import {
   RefreshCw, Loader, Settings, LogIn, LogOut, User
 } from 'lucide-react'
 import { useMsal, AuthenticatedTemplate, UnauthenticatedTemplate } from '@azure/msal-react'
-import { loginRequest } from './msalConfig'
+import { loginRequest } from './msalConfig.js'
 import { loadFromGist, saveToGist } from './services/gistStorage.js'
 
 // ── Local date helpers ───────────────────────────────────────

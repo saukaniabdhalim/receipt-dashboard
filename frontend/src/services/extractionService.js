@@ -8,7 +8,7 @@ const CATEGORIES = [
 ]
 
 // ── Detect mobile ─────────────────────────────────────────────
-const isMobile = () => /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+const isMobile = () => typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
 
 // ── Compress image ────────────────────────────────────────────
 export async function compressForUpload(file) {
