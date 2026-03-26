@@ -38,7 +38,15 @@ export const CATEGORIES = [
   { id:'others',        label:'Others',            color:'#6b82a8', emoji:'📋' },
 ]
 
-const LOCAL_KEY = 'resit_dashboard_data'
+function localKeyForAccount(acct) {
+  // Prevent cross-account leakage when multiple Microsoft accounts use the same browser.
+  const key =
+    acct?.homeAccountId ||
+    acct?.localAccountId ||
+    acct?.username ||
+    'unknown'
+  return `resit_dashboard_data_${key}`
+}
 
 
 // ── App ───────────────────────────────────────────────────────
@@ -87,6 +95,9 @@ export default function App() {
   // ── Init: load data ─────────────────────────────────────────
   useEffect(() => {
     if (!account) return
+    const LOCAL_KEY = localKeyForAccount(account)
+    // Clear immediately to avoid briefly showing receipts from the previous user.
+    setReceipts([])
 
     const init = async () => {
       // 1. Load from localStorage immediately so UI is never blank
@@ -121,6 +132,7 @@ export default function App() {
   // ── Auto-save: localStorage immediately + debounced Gist ───
   useEffect(() => {
     if (!account) return
+    const LOCAL_KEY = localKeyForAccount(account)
     // Always save to localStorage regardless of gist status
     if (receipts.length > 0) {
       localStorage.setItem(LOCAL_KEY, JSON.stringify(receipts))
@@ -188,7 +200,10 @@ export default function App() {
   }
   const clearAll = () => {
     if (confirm('Clear ALL receipts? Cannot be undone.')) {
-      setReceipts([]); localStorage.removeItem(LOCAL_KEY); showToast('All data cleared','error')
+      const LOCAL_KEY = localKeyForAccount(account)
+      setReceipts([])
+      localStorage.removeItem(LOCAL_KEY)
+      showToast('All data cleared','error')
     }
   }
 
