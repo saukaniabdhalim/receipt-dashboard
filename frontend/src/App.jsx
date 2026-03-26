@@ -98,6 +98,7 @@ export default function App() {
     const LOCAL_KEY = localKeyForAccount(account)
     // Clear immediately to avoid briefly showing receipts from the previous user.
     setReceipts([])
+    let cancelled = false
 
     const init = async () => {
       // 1. Load from localStorage immediately so UI is never blank
@@ -118,21 +119,25 @@ export default function App() {
           setReceipts(remote)
           localStorage.setItem(LOCAL_KEY, JSON.stringify(remote))
         }
-        setSyncStatus('synced')
+        if (!cancelled) setSyncStatus('synced')
       } catch (e) {
         // Gist failed — keep whatever is in localStorage, just log the error
-        setSyncStatus('error')
-        setSyncError(e.message)
-        console.warn('[Gist] Load failed, using localStorage:', e.message)
+        if (!cancelled) {
+          setSyncStatus('error')
+          setSyncError(e.message)
+          console.warn('[Gist] Load failed, using localStorage:', e.message)
+        }
       }
     }
     init()
+    return () => { cancelled = true }
   }, [account, getAccessToken])
 
   // ── Auto-save: localStorage immediately + debounced Gist ───
   useEffect(() => {
     if (!account) return
     const LOCAL_KEY = localKeyForAccount(account)
+    let cancelled = false
     // Always save to localStorage regardless of gist status
     if (receipts.length > 0) {
       localStorage.setItem(LOCAL_KEY, JSON.stringify(receipts))
@@ -141,18 +146,22 @@ export default function App() {
     // Debounced background sync to Gist
     clearTimeout(saveTimeout.current)
     saveTimeout.current = setTimeout(async () => {
+      if (cancelled) return
       if (receipts.length === 0) return
       setSyncStatus('syncing')
       try {
         const token = await getAccessToken()
         await saveToGist(receipts, token)
-        setSyncStatus('synced')
+        if (!cancelled) setSyncStatus('synced')
       } catch (e) {
-        setSyncStatus('error')
-        setSyncError(e.message)
-        console.warn('[Gist] Save failed (data safe in localStorage):', e.message)
+        if (!cancelled) {
+          setSyncStatus('error')
+          setSyncError(e.message)
+          console.warn('[Gist] Save failed (data safe in localStorage):', e.message)
+        }
       }
     }, 1500)
+    return () => { cancelled = true }
   }, [receipts, account, getAccessToken])
 
   // ── Toast helper ────────────────────────────────────────────
@@ -266,7 +275,8 @@ export default function App() {
     return (
       <div style={{ display:'flex', alignItems:'center', gap:5, fontSize:11,
         color:cfg.color, padding:'3px 8px', borderRadius:20,
-        background:`${cfg.color}12`, border:`1px solid ${cfg.color}30` }}>
+        background:`${cfg.color}12`, border:`1px solid ${cfg.color}30` }}
+        title={syncStatus === 'error' && syncError ? `Sync error: ${syncError}` : undefined}>
         {cfg.icon} {cfg.label}
       </div>
     )
